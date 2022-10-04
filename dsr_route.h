@@ -43,27 +43,6 @@ private:
     // 路由记录
     vector<in_addr_t> routeList;
 
-private:
-    /* /// @brief 将缓冲区的内容解析为当前 DsrRoutePacket 实例的头部信息
-    /// @param reqHeaderBuf 路由头部信息的缓冲区
-    /// @return 
-    void parseHeaderFromBuf(const char* reqHeaderBuf);
-
-    /// @brief 将当前 DsrRoutePacket 实例的头部信息转换为字符串，以便通过网络发送
-    /// @param reqHeaderBuf 路由头部信息的缓冲区
-    /// @return 
-    void serializeHeaderToBuf(char* reqHeaderBuf);
-
-    /// @brief 将缓冲区的内容解析为当前 DsrRoutePacket 实例的路由记录
-    /// @param reqRouteBuf 路由记录的缓冲区
-    /// @return 
-    void parseRouteFromBuf(const char* reqRouteBuf);
-
-    /// @brief 将当前 DsrRoutePacket 实例的路由记录转换为字符串，以便通过网络广播
-    /// @param reqRouteBuf 
-    /// @return 路由记录的缓冲区
-    void serializeRouteToBuf(char* reqRouteBuf); */
-
 public:
     DsrRoutePacket();
     DsrRoutePacket(const DsrRoutePacket& dsrRouteRequest);
