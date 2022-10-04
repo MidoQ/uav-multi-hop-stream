@@ -87,7 +87,7 @@ void DsrRoutePacket::printReqInfo()
     cout << "\n=======================================================\n" << endl;
 }
 
-int DsrRoutePacket::parseHeaderFromBuf(const char* reqHeaderBuf)
+/* int DsrRoutePacket::parseHeaderFromBuf(const char* reqHeaderBuf)
 {
     type = (DsrPacketType) reqHeaderBuf[0];
 
@@ -112,9 +112,9 @@ int DsrRoutePacket::parseHeaderFromBuf(const char* reqHeaderBuf)
 
 int DsrRoutePacket::serializeHeaderToBuf(char* reqHeaderBuf)
 {
-    reqHeaderBuf[0] = (char)type;
+    reqHeaderBuf[1] = (char)type;
 
-    uint32_t* cur = (uint32_t*)(reqHeaderBuf + 1);
+    uint32_t* cur = (uint32_t*)(reqHeaderBuf + 2);
 
     *cur = hton32(srcIP);
     cur++;
@@ -169,6 +169,62 @@ int DsrRoutePacket::serializeRouteToBuf(char* reqRouteBuf)
     }
 
     return 0;
+} */
+
+void DsrRoutePacket::parseFromBuf(const char* pktBuf)
+{
+    type = (DsrPacketType) pktBuf[0];
+
+    uint32_t* cur = (uint32_t*)(pktBuf + 1);
+
+    srcIP = ntoh32(*cur);
+    cur++;
+
+    dstIP = ntoh32(*cur);
+    cur++;
+
+    hop = ntoh32(*cur);
+    cur++;
+
+    reqID = ntoh32(*cur);
+    cur++;
+
+    routeListLength = ntoh32(*cur);
+    cur++;
+
+    for (size_t i = 0; i < routeListLength; i++) {
+        routeList.push_back(ntoh32(*cur));
+        cur++;
+    }
+}
+
+int DsrRoutePacket::serializeToBuf(char* pktBuf)
+{
+    pktBuf[0] = (char)type;
+
+    uint32_t* cur = (uint32_t*)(pktBuf + 1);
+
+    *cur = hton32(srcIP);
+    cur++;
+
+    *cur = hton32(dstIP);
+    cur++;
+
+    *cur = hton32(hop);
+    cur++;
+
+    *cur = hton32(reqID);
+    cur++;
+
+    *cur = hton32(routeListLength);
+    cur++;
+
+    for (size_t i = 0; i < routeListLength; i++) {
+        *cur = hton32(routeList[i]);
+        cur++;
+    }
+
+    return DSR_REQ_HEADER_LEN + routeListLength * 4;
 }
 
 /* DsrRouteTable */
