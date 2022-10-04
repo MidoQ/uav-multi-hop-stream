@@ -147,24 +147,59 @@ int DsrRoutePacket::serializeToBuf(char* pktBuf)
 
 DsrRouteTable::DsrRouteTable()
 {
+    routeTable.clear();
 }
 
 DsrRouteTable::~DsrRouteTable()
 {
 }
 
-int DsrRouteTable::addRouteItem(in_addr_t _srcIP, in_addr_t _nextHopIP, int _metric)
+bool DsrRouteTable::updateRouteItem(in_addr_t _dstIP, in_addr_t _nextHopIP, int _metric)
 {
+    map<in_addr_t, routeTableVal>::iterator it = routeTable.find(_dstIP);
+
+    if (it == routeTable.end()) {
+        // 无此表项，插入新表项即可
+        routeTable.insert(pair<in_addr_t, routeTableVal>(_dstIP, routeTableVal(_nextHopIP, _metric)));
+        return true;
+    } else if (_metric < it->second.metric) {
+        // 有此表项，但距离更小时才插入
+        routeTable[_dstIP] = routeTableVal(_nextHopIP, _metric);
+        return true;
+    }
+    return false;
+}
+
+bool DsrRouteTable::findRouteItem(in_addr_t dstIP, routeTableVal& item)
+{
+    map<in_addr_t, routeTableVal>::iterator it = routeTable.find(dstIP);
+    
+    if (it == routeTable.end()) {
+        return false;
+    }
+
+    item.nextHopIP = it->second.nextHopIP;
+    item.metric = it->second.metric;
+    return true;
 }
 
 /* DsrReqIdRecorder */
 
 DsrReqIdRecorder::DsrReqIdRecorder()
 {
+    idHistory.clear();
 }
 
 DsrReqIdRecorder::~DsrReqIdRecorder()
 {
+}
+
+void DsrReqIdRecorder::addReqID(uint32_t reqID) {
+    idHistory.insert(reqID);
+}
+
+bool DsrReqIdRecorder::reqIDExist(uint32_t reqID) {
+    return idHistory.find((unsigned int)reqID) != idHistory.end();
 }
 
 /* DsrRouteGetter */
@@ -177,12 +212,13 @@ DsrRouteGetter::~DsrRouteGetter()
 {
 }
 
-in_addr_t DsrRouteGetter::getNextHop(const char* srcIP, int timeout)
+in_addr_t DsrRouteGetter::getNextHop(const char* dstIP, int timeout)
 {
 }
 
-in_addr_t DsrRouteGetter::getNextHop(in_addr_t srcIP, int timeout)
+in_addr_t DsrRouteGetter::getNextHop(in_addr_t dstIP, int timeout)
 {
+    
 }
 
 /* DsrRouteListener */

@@ -7,14 +7,14 @@
 #ifndef _DSR_ROUTE_H
 #define _DSR_ROUTE_H
 
+#include "utils.h"
 #include <arpa/inet.h>
+#include <cstring>
 #include <iostream>
 #include <map>
 #include <set>
 #include <sys/socket.h>
 #include <vector>
-#include <cstring>
-#include "utils.h"
 
 #define PORT_DSR 9190
 #define DSR_REQ_HEADER_LEN 21
@@ -62,10 +62,7 @@ public:
     int serializeToBuf(char* pktBuf);
 };
 
-/******************************************************
- * Name: DsrRouteTable
- * Func: 全局路由表单例（仅在DsrRouteGetter初始化时，初始化一次）
- ******************************************************/
+/// @brief 路由表的表项值结构体
 typedef struct RouteTableVal {
     in_addr_t nextHopIP;
     int metric;
@@ -81,8 +78,13 @@ typedef struct RouteTableVal {
     }
 } routeTableVal;
 
+/// @brief 全局路由表单例（仅在DsrRouteGetter初始化时，初始化一次）
 class DsrRouteTable {
+    friend class DsrRouteGetter;
+    friend class DsrRouteListener;
+
 private:
+    // 路由表，由srcIP映射到表项（下一跳IP、距离）
     map<in_addr_t, routeTableVal> routeTable;
 
 private:
@@ -90,7 +92,18 @@ private:
     DsrRouteTable(const DsrRouteTable&) = delete;
     DsrRouteTable& operator=(const DsrRouteTable&) = delete;
 
-    int addRouteItem(in_addr_t _srcIP, in_addr_t _nextHopIP, int _metric);
+    /// @brief 添加一条路由表项（当表项不存在时插入，当新表项的距离更小时更新，否则无操作）
+    /// @param _dstIP 预计添加表项的目的IP
+    /// @param _nextHopIP 预计添加表项的下一跳IP
+    /// @param _metric 预计添加表项的距离（本节点到目的节点）
+    /// @return =true 已添加或更新表项 =false 表项已存在且未更新
+    bool updateRouteItem(in_addr_t _dstIP, in_addr_t _nextHopIP, int _metric);
+
+    /// @brief 查找一条路由表项
+    /// @param dstIP 欲查找路由的目标IP
+    /// @param item 若存在路由表项，则表项将保存在item中
+    /// @return =true 查找到表项，并保存在item中 =false 未查找到表项
+    bool findRouteItem(in_addr_t dstIP, routeTableVal& item);
 
 public:
     ~DsrRouteTable();
@@ -107,6 +120,9 @@ public:
  * Func: 记录本节点处理过的路由请求ID
  ******************************************************/
 class DsrReqIdRecorder {
+    friend class DsrRouteGetter;
+    friend class DsrRouteListener;
+
 private:
     set<unsigned int> idHistory;
 
@@ -115,10 +131,20 @@ private:
     DsrReqIdRecorder(const DsrReqIdRecorder&) = delete;
     DsrReqIdRecorder& operator=(const DsrReqIdRecorder&) = delete;
 
+    /// @brief 记录一个已处理的路由请求ID
+    /// @param reqID 路由请求ID
+    void addReqID(uint32_t reqID);
+
+    /// @brief 判断路由请求ID是否已记录过
+    /// @param reqID 路由请求ID
+    /// @return =true 已记录 =false 未记录
+    bool reqIDExist(uint32_t reqID);
+
 public:
     ~DsrReqIdRecorder();
 
-    static DsrReqIdRecorder& getInstance() {
+    static DsrReqIdRecorder& getInstance()
+    {
         static DsrReqIdRecorder instance;
         return instance;
     }
@@ -144,8 +170,8 @@ public:
         return instance;
     }
 
-    in_addr_t getNextHop(const char* srcIP, int timeout);
-    in_addr_t getNextHop(in_addr_t srcIP, int timeout);
+    in_addr_t getNextHop(const char* dstIP, int timeout);
+    in_addr_t getNextHop(in_addr_t dstIP, int timeout);
 };
 
 /******************************************************
