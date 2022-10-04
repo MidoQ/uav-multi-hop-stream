@@ -49,6 +49,89 @@ public:
     DsrRoutePacket(DsrPacketType pktType, const char* srcIP_s, const char* dstIP_s);
     ~DsrRoutePacket() = default;
 
+    // Operation of type
+
+    DsrPacketType getType() {
+        return type;
+    }
+
+    void setType(DsrPacketType _type) {
+        this->type = _type;
+    }
+
+    // Operation of srcIP
+
+    in_addr_t getSrcIP() {
+        return srcIP;
+    }
+
+    void setSrcIP(in_addr_t _srcIP) {
+        this->srcIP = _srcIP;
+    }
+
+    void setSrcIP(const char* _srcIP) {
+        in_addr tmp;
+        inet_pton(AF_INET, _srcIP, &tmp);
+        this->srcIP = tmp.s_addr;
+    }
+
+    // Operation of dstIP
+
+    in_addr_t getDstIP() {
+        return dstIP;
+    }
+
+    void setDstIP(in_addr_t _dstIP) {
+        this->dstIP = _dstIP;
+    }
+
+    void setDstIP(const char* _dstIP) {
+        in_addr tmp;
+        inet_pton(AF_INET, _dstIP, &tmp);
+        this->dstIP = tmp.s_addr;
+    }
+
+    // Operation of hop
+
+    uint32_t getHop() {
+        return hop;
+    }
+
+    void setHop(uint32_t _hop) {
+        this->hop = _hop;
+    }
+
+    void increaseHop() {
+        hop++;
+    }
+
+    // Operation of reqID
+
+    uint32_t getReqID() {
+        return reqID;
+    }
+
+    void setReqID(uint32_t _reqID) {
+        this->reqID = _reqID;
+    }
+
+    // Operation of routeList
+    vector<in_addr_t>& getRouteList() {
+        return routeList;
+    }
+
+    void attachRoute(in_addr_t newIP) {
+        routeList.push_back(newIP);
+        routeListLength++;
+    }
+
+    void attachRoute(const char* newIP) {
+        in_addr tmp;
+        inet_pton(AF_INET, newIP, &tmp);
+        routeList.push_back(tmp.s_addr);
+        routeListLength++;
+    }
+
     /// @brief 打印路由请求报文信息
     void printReqInfo();
 
@@ -62,7 +145,9 @@ public:
     int serializeToBuf(char* pktBuf);
 };
 
-/// @brief 路由表的表项值结构体
+/**
+ *  @brief 路由表的表项值结构体
+ */
 typedef struct RouteTableVal {
     in_addr_t nextHopIP;
     int metric;
@@ -78,7 +163,9 @@ typedef struct RouteTableVal {
     }
 } routeTableVal;
 
-/// @brief 全局路由表单例（仅在DsrRouteGetter初始化时，初始化一次）
+/**
+ * @brief 全局路由表单例（仅在DsrRouteGetter初始化时，初始化一次）
+ */
 class DsrRouteTable {
     friend class DsrRouteGetter;
     friend class DsrRouteListener;
@@ -115,10 +202,9 @@ public:
     }
 };
 
-/******************************************************
- * Name: DsrReqIdRecorder
- * Func: 记录本节点处理过的路由请求ID
- ******************************************************/
+/**
+ * @brief 记录本节点处理过的路由请求ID
+ */
 class DsrReqIdRecorder {
     friend class DsrRouteGetter;
     friend class DsrRouteListener;
@@ -152,9 +238,12 @@ public:
 
 /******************************************************
  * Name: DsrRouteGetter
- * Func: 等待其他应用线程发起的路由请求，并返回查找的路由
+ * Func: 
  * Others: 单例模式
  ******************************************************/
+/**
+ * @brief 等待其他应用线程发起的路由请求，并返回查找的路由
+ */
 class DsrRouteGetter {
 private:
     DsrRouteGetter();
@@ -164,14 +253,15 @@ private:
 public:
     ~DsrRouteGetter();
 
+    // TODO 需删除。getter不能是一个单例，否则不能收到并发的路由请求
     static DsrRouteGetter& getInstance()
     {
         static DsrRouteGetter instance;
         return instance;
     }
 
-    in_addr_t getNextHop(const char* dstIP, int timeout);
     in_addr_t getNextHop(in_addr_t dstIP, int timeout);
+    in_addr_t getNextHop(const char* dstIP, int timeout);
 };
 
 /******************************************************

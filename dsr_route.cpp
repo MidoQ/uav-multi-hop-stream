@@ -212,11 +212,21 @@ DsrRouteGetter::~DsrRouteGetter()
 {
 }
 
-in_addr_t DsrRouteGetter::getNextHop(const char* dstIP, int timeout)
+in_addr_t DsrRouteGetter::getNextHop(in_addr_t dstIP, int timeout)
 {
+    DsrRouteTable& table = DsrRouteTable::getInstance();
+    routeTableVal tableItem;
+
+    if (table.findRouteItem(dstIP, tableItem)) {
+        // 找到已缓存的表项，直接返回下一跳地址
+        return tableItem.nextHopIP;
+    } else {
+        // 未找到已缓存的表项，新建一线程发起路由请求，并等待监听线程的通知
+        // TODO
+    }
 }
 
-in_addr_t DsrRouteGetter::getNextHop(in_addr_t dstIP, int timeout)
+in_addr_t DsrRouteGetter::getNextHop(const char* dstIP, int timeout)
 {
     
 }
