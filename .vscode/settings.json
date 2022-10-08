@@ -26,6 +26,12 @@
         "typeinfo": "cpp",
         "string.h": "c",
         "string": "cpp",
-        "vector": "cpp"
+        "vector": "cpp",
+        "chrono": "cpp",
+        "unordered_set": "cpp",
+        "deque": "cpp",
+        "unordered_map": "cpp",
+        "condition_variable": "cpp",
+        "thread": "cpp"
     }
 }

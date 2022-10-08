@@ -9,18 +9,30 @@
 
 #include "utils.h"
 #include <arpa/inet.h>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <iostream>
 #include <map>
-#include <set>
+#include <mutex>
 #include <sys/socket.h>
+#include <thread>
+#include <unistd.h>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #define PORT_DSR 9190
 #define DSR_REQ_HEADER_LEN 21
 #define DSR_PKT_MAX_LEN 400
+#define DSR_PKT_GENERAL_LEN 100
 
-using namespace std;
+// using namespace std;
+using std::cout;
+using std::endl;
+using namespace std::this_thread; // sleep_for, sleep_until
+using namespace std::chrono; // nanoseconds, system_clock, seconds
 
 enum class DsrPacketType : char {
     request = 1,
@@ -41,12 +53,13 @@ private:
     uint32_t routeListLength;
 
     // 路由记录
-    vector<in_addr_t> routeList;
+    std::vector<in_addr_t> routeList;
 
 public:
     DsrRoutePacket();
-    DsrRoutePacket(const DsrRoutePacket& dsrRouteRequest);
     DsrRoutePacket(DsrPacketType pktType, const char* srcIP_s, const char* dstIP_s);
+    DsrRoutePacket(DsrPacketType pktType, in_addr_t srcIP, in_addr_t dstIP);
+    DsrRoutePacket(const DsrRoutePacket& dsrRouteRequest);
     ~DsrRoutePacket() = default;
 
     // Operation of type
@@ -105,6 +118,10 @@ public:
         hop++;
     }
 
+    void decreaseHop() {
+        hop--;
+    }
+
     // Operation of reqID
 
     uint32_t getReqID() {
@@ -116,7 +133,8 @@ public:
     }
 
     // Operation of routeList
-    vector<in_addr_t>& getRouteList() {
+
+    std::vector<in_addr_t>& getRouteList() {
         return routeList;
     }
 
@@ -128,8 +146,21 @@ public:
     void attachRoute(const char* newIP) {
         in_addr tmp;
         inet_pton(AF_INET, newIP, &tmp);
-        routeList.push_back(tmp.s_addr);
-        routeListLength++;
+        attachRoute(tmp.s_addr);
+    }
+
+    void reverseRoute() {
+        size_t n = routeList.size();
+        for (size_t i = 0; i < n / 2; ++i) {
+            in_addr_t tmp = routeList[i];
+            routeList[i] = routeList[n - i - 1];
+            routeList[n - i - 1] = tmp;
+        }
+    }
+    
+    /// @return 报文实例转换为字符串后的大小
+    size_t expectedBufLen() {
+        return DSR_REQ_HEADER_LEN + routeListLength * 4;
     }
 
     /// @brief 打印路由请求报文信息
@@ -172,7 +203,7 @@ class DsrRouteTable {
 
 private:
     // 路由表，由srcIP映射到表项（下一跳IP、距离）
-    map<in_addr_t, routeTableVal> routeTable;
+    std::map<in_addr_t, routeTableVal> routeTable;
 
 private:
     DsrRouteTable();
@@ -210,7 +241,7 @@ class DsrReqIdRecorder {
     friend class DsrRouteListener;
 
 private:
-    set<unsigned int> idHistory;
+    std::unordered_set<unsigned int> idHistory;
 
 private:
     DsrReqIdRecorder();
@@ -236,32 +267,24 @@ public:
     }
 };
 
-/******************************************************
- * Name: DsrRouteGetter
- * Func: 
- * Others: 单例模式
- ******************************************************/
 /**
  * @brief 等待其他应用线程发起的路由请求，并返回查找的路由
  */
 class DsrRouteGetter {
 private:
+    void sendRequest(in_addr_t dstIP);
+
+public:
     DsrRouteGetter();
     DsrRouteGetter(const DsrRouteGetter&) = delete;
     DsrRouteGetter& operator=(const DsrRouteGetter&) = delete;
-
-public:
     ~DsrRouteGetter();
 
-    // TODO 需删除。getter不能是一个单例，否则不能收到并发的路由请求
-    static DsrRouteGetter& getInstance()
-    {
-        static DsrRouteGetter instance;
-        return instance;
-    }
+    static void routeWaitTimer(in_addr_t dstIP, int timeout);
+
+    in_addr_t getNextHop(const char* dstIP, int timeout);
 
     in_addr_t getNextHop(in_addr_t dstIP, int timeout);
-    in_addr_t getNextHop(const char* dstIP, int timeout);
 };
 
 /******************************************************
@@ -271,13 +294,24 @@ public:
  ******************************************************/
 class DsrRouteListener {
 private:
-    char* reqPacketBuf;
+    int recv_sock, brd_sock;
+    char* packetBuf;
+    struct sockaddr_in brd_addr;
 
 private:
     DsrRouteListener();
     DsrRouteListener(const DsrRouteListener&) = delete;
     DsrRouteListener& operator=(const DsrRouteListener&) = delete;
-    int listenReqPacket(char* reqPacketBuf);
+    
+    int listenPacket();
+
+    void processRequestPkt(DsrRoutePacket& pkt);
+
+    void processResponsePkt(DsrRoutePacket& pkt);
+
+    void broadcastPkt(DsrRoutePacket& pkt);
+
+    void unicastPkt(in_addr_t dstIP, DsrRoutePacket& pkt);
 
 public:
     ~DsrRouteListener();
@@ -288,7 +322,7 @@ public:
         return instance;
     }
 
-    int startListen(); // TODO: 在这里创建线程，并循环监听相应端口
+    void startListen(); // TODO: 在这里创建线程，并循环监听相应端口
 };
 
 #endif

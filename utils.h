@@ -2,6 +2,7 @@
 #define _UTILS_H
 
 #include <arpa/inet.h>
+#include <sys/select.h>
 
 /*************************************
  *          网络字节序转换函数
@@ -50,5 +51,18 @@ inline uint64_t ntoh64(uint64_t net64_t)
         return net64_t;
     }
 }
+
+/*************************************
+ *              延时函数
+ *************************************/
+
+/* Delay in seconds */
+void delay(size_t seconds);
+
+/* Delay in microseconds */
+void udelay(size_t us);
+
+/* Delay in milliseconds */
+void mdelay(size_t ms);
 
 #endif
