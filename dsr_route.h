@@ -200,6 +200,7 @@ typedef struct RouteTableVal {
 class DsrRouteTable {
     friend class DsrRouteGetter;
     friend class DsrRouteListener;
+    friend class routeTableProbe;
 
 private:
     // 路由表，由srcIP映射到表项（下一跳IP、距离）
@@ -222,6 +223,8 @@ private:
     /// @param item 若存在路由表项，则表项将保存在item中
     /// @return =true 查找到表项，并保存在item中 =false 未查找到表项
     bool findRouteItem(in_addr_t dstIP, routeTableVal& item);
+
+    void printTable();
 
 public:
     ~DsrRouteTable();
@@ -287,11 +290,9 @@ public:
     in_addr_t getNextHop(in_addr_t dstIP, int timeout);
 };
 
-/******************************************************
- * Name: DsrRouteListener
- * Func: 监听其他节点发来的路由请求并处理
- * Others: 单例模式
- ******************************************************/
+/**
+ * @brief 监听其他节点发来的路由请求并处理
+ */
 class DsrRouteListener {
 private:
     int recv_sock, brd_sock;
@@ -302,8 +303,8 @@ private:
     DsrRouteListener();
     DsrRouteListener(const DsrRouteListener&) = delete;
     DsrRouteListener& operator=(const DsrRouteListener&) = delete;
-    
-    int listenPacket();
+
+    static void listenPacket();     // thread function
 
     void processRequestPkt(DsrRoutePacket& pkt);
 
@@ -323,6 +324,14 @@ public:
     }
 
     void startListen(); // TODO: 在这里创建线程，并循环监听相应端口
+};
+
+class routeTableProbe {
+public:
+    void printRouteTable() {
+        DsrRouteTable& table = DsrRouteTable::getInstance();
+        table.printTable();
+    }
 };
 
 #endif

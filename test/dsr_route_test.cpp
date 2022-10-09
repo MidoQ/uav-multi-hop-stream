@@ -1,11 +1,94 @@
+#include "../dsr_route.h"
+#include "../utils.h"
 #include <iostream>
 #include <string>
-#include "../utils.h"
-#include "../dsr_route.h"
+#include <random>
 
 using namespace std;
 
-void testDsrRoutePacket() {
+char myIP_s[INET_ADDRSTRLEN];
+in_addr_t myIP;
+
+void testDsrRoutePacket();
+
+int main(int argc, char** argv)
+{
+    cout << "dsr_route_test running...\n";
+
+    // testDsrRoutePacket();
+
+    if (argc != 2) {
+        cout << "Usage: " << argv[0] << "myselfIP\n";
+        cout << "Process exit...\n";
+        exit(0);
+    }
+
+    // 读取本节点IP地址
+    strcpy(myIP_s, argv[1]);
+    cout << "My self IP: " << myIP_s << '\n';
+
+    in_addr tmp;
+    inet_pton(AF_INET, myIP_s, &tmp);
+    myIP = tmp.s_addr;
+
+    // 设置目标IP地址列表
+    vector<string> dstList_s(5, string());
+    vector<in_addr_t> dstList(5, 0);
+
+    for (size_t i = 0; i < 5; ++i) {
+        dstList_s[i] = "192.168.2." + (i + 100 + '0');
+        inet_pton(AF_INET, dstList_s[i].c_str(), &tmp);
+        dstList[i] = tmp.s_addr;
+    }
+
+    // 随机数引擎
+    std::default_random_engine eng(time(0));
+    std::uniform_int_distribution<int> distr(30, 200);
+
+    // 路由请求线程
+    auto requester = [&]() {
+        DsrRouteGetter getter;
+        int timeout_sec = 3;
+
+        for (size_t i = 0; i < 5; ++i) {
+            int msec = distr(eng);
+            sleep_for(milliseconds(msec));
+            if (dstList[i] != myIP) {
+                getter.getNextHop(dstList[i], timeout_sec);
+            }
+        }
+    };
+
+    // 路由表打印线程
+    auto routeTablePrinter = [&]() {
+        routeTableProbe probe;
+
+        while(1) {
+            sleep_for(seconds(1));
+            probe.printRouteTable();
+        }
+    };
+
+    // 启动所有线程
+    DsrRouteListener& listener = DsrRouteListener::getInstance();
+    listener.startListen();
+
+    sleep_for(seconds(1));
+
+    thread req1(requester);
+    thread req2(requester);
+
+    thread printer(routeTablePrinter);
+
+    req1.join();
+    req2.join();
+    printer.join();
+
+    return 0;
+}
+
+void testDsrRoutePacket()
+{
     /* 测试 parseFromBuf() */
 
     // 缓冲区初始化
@@ -29,13 +112,13 @@ void testDsrRoutePacket() {
     *cur = hton32(tmp_addr.s_addr);
     cur++;
 
-    *cur = hton32(378940212);   // hop
+    *cur = hton32(378940212); // hop
     cur++;
 
-    *cur = 0x21e52ca9;  // reqID
+    *cur = 0x21e52ca9; // reqID
     cur++;
 
-    *cur = hton32(7);       // routeListLen
+    *cur = hton32(7); // routeListLen
     cur++;
 
     string str = "192.168.15.1";
@@ -79,12 +162,4 @@ void testDsrRoutePacket() {
     char dst[] = "233.123.64.242";
     DsrRoutePacket packet4(DsrPacketType::request, src, dst);
     packet4.printReqInfo();
-}
-
-int main(int, char**) {
-    cout << "dsr_route_test running...\n";
-
-    testDsrRoutePacket();
-
-    return 0;
 }

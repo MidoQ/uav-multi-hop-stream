@@ -27,8 +27,8 @@ set(MODULE_CXXFILE
    dsr_route.cpp topo.cpp
    sdn_cmd.cpp video_stream.cpp)
 
-add_executable(uav_net_2 main.cpp ${MODULE_CXXFILE})
-target_link_libraries(uav_net_2 pthread)
+# add_executable(uav_net_2 main.cpp ${MODULE_CXXFILE})
+# target_link_libraries(uav_net_2 pthread)
 
 add_executable(dsr_route_test test/dsr_route_test.cpp ${MODULE_CXXFILE})
 target_link_libraries(dsr_route_test pthread)

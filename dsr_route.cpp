@@ -2,8 +2,10 @@
 
 /* Global variables */
 std::atomic<uint32_t> myReqID = {0};
-char myIP_s[] = "192.168.2.101"; // debug temp
-char broadcast_IP_s[] = "192.168.2.255";    // debug temp
+// char myIP_s[] = "192.168.2.101"; // debug temp
+extern char myIP_s[];
+extern in_addr_t myIP;
+char broadcast_IP_s[] = "192.168.2.255"; // debug temp
 
 enum RouteRespondState : char {
     waiting = 1,    // requester 正在等待路由回复
@@ -212,6 +214,25 @@ bool DsrRouteTable::findRouteItem(in_addr_t dstIP, routeTableVal& item)
     return true;
 }
 
+void DsrRouteTable::printTable()
+{
+    char dstIP_s[INET_ADDRSTRLEN];
+    char nextHopIP_s[INET_ADDRSTRLEN];
+
+    cout << "---------------------------------------\n"
+         << "Dst IP\tNext Hop\tmetric\n"
+         << "---------------------------------------\n";
+
+    // std::map<in_addr_t, routeTableVal>::iterator it;
+    for (auto it = routeTable.begin(); it != routeTable.end(); it++) {
+        inet_ntop(AF_INET, &(it->first), dstIP_s, INET_ADDRSTRLEN);
+        inet_ntop(AF_INET, &(it->second.nextHopIP), nextHopIP_s, INET_ADDRSTRLEN);
+        cout << dstIP_s << '\t' << nextHopIP_s << '\t' << it->second.metric << '\n';
+    }
+
+    cout << "---------------------------------------" << endl;
+}
+
 /* DsrReqIdRecorder */
 
 DsrReqIdRecorder::DsrReqIdRecorder()
@@ -326,8 +347,8 @@ in_addr_t DsrRouteGetter::getNextHop(in_addr_t dstIP, int timeout)
 
 void DsrRouteGetter::sendRequest(in_addr_t dstIP)
 {
-    in_addr_t myIP;     // debug temp
-    in_addr tmp;
+    // in_addr_t myIP;     // debug temp
+    // in_addr tmp;
     int send_sock;
     struct sockaddr_in send_addr;
     char send_buf[DSR_PKT_GENERAL_LEN];
@@ -339,20 +360,21 @@ void DsrRouteGetter::sendRequest(in_addr_t dstIP)
 
     memset(&send_addr, 0, sizeof(send_addr));
     send_addr.sin_family = AF_INET;
-    inet_pton(AF_INET, broadcast_IP_s, &tmp);
-    send_addr.sin_addr.s_addr = tmp.s_addr;
+    // inet_pton(AF_INET, broadcast_IP_s, &tmp);
+    // send_addr.sin_addr.s_addr = tmp.s_addr;
+    send_addr.sin_addr.s_addr = myIP;
     send_addr.sin_port = hton16(PORT_DSR);
 
     setsockopt(send_sock, SOL_SOCKET, SO_BROADCAST, (void*)&so_brd, sizeof(so_brd));
 
     // 创建DSR报文
-    inet_pton(AF_INET, myIP_s, &tmp);
-    myIP = tmp.s_addr;
+    // inet_pton(AF_INET, myIP_s, &tmp); // debug temp
+    // myIP = tmp.s_addr;
     DsrRoutePacket pkt(DsrPacketType::request, myIP, dstIP);
 
     pkt.setHop(1);      // 准备发送的报文，跳数已经变为到接收者的跳数
     pkt.setReqID(myReqID++);
-    pkt.attachRoute(myIP);  // debug temp
+    pkt.attachRoute(myIP);
 
     memset(send_buf, 0, DSR_PKT_GENERAL_LEN);
     int send_len = pkt.serializeToBuf(send_buf);
@@ -418,38 +440,33 @@ DsrRouteListener::~DsrRouteListener()
     delete[] packetBuf;
 }
 
-int DsrRouteListener::listenPacket()
+void DsrRouteListener::listenPacket()
 {
     int recvLen;
     DsrRoutePacket packetInfo;
+    DsrRouteListener& listener = DsrRouteListener::getInstance();
 
     while (1) {
-        recvLen = recvfrom(recv_sock, packetBuf, DSR_PKT_MAX_LEN, 0, NULL, 0);
-        packetInfo.parseFromBuf(packetBuf);
+        recvLen = recvfrom(listener.recv_sock, listener.packetBuf, DSR_PKT_MAX_LEN, 0, NULL, 0);
+        packetInfo.parseFromBuf(listener.packetBuf);
 
         // 处理报文
         if (packetInfo.getType() == DsrPacketType::request) {
-            processRequestPkt(packetInfo);
+            listener.processRequestPkt(packetInfo);
         } else if (packetInfo.getType() == DsrPacketType::response) {
-            processResponsePkt(packetInfo);
+            listener.processResponsePkt(packetInfo);
         } else {
             cout << '[' << __func__ << "] Unknown DSR packet type!\n";
         }
     }
-
-    return 0;
-}
-
-void DsrRouteListener::startListen()
-{
 }
 
 void DsrRouteListener::processRequestPkt(DsrRoutePacket& pkt)
 {
     // debug temp
-    in_addr tmp;
-    inet_pton(AF_INET, myIP_s, &tmp);
-    in_addr_t myIP = tmp.s_addr;
+    // in_addr tmp;
+    // inet_pton(AF_INET, myIP_s, &tmp);
+    // in_addr_t myIP = tmp.s_addr;
     // debug temp
 
     // 更新路由表
@@ -457,6 +474,11 @@ void DsrRouteListener::processRequestPkt(DsrRoutePacket& pkt)
     std::vector<in_addr_t>& list = pkt.getRouteList();
     in_addr_t myNextHopToSrc = list[list.size() - 1];
     table.updateRouteItem(pkt.getSrcIP(), myNextHopToSrc, pkt.getHop());
+
+    // 本节点也会收到自己的广播，收到后直接丢弃
+    if (pkt.getSrcIP() == myIP) {
+        return;
+    }
 
     // 处理路由请求报文
     if (pkt.getDstIP() != myIP) {
@@ -478,9 +500,9 @@ void DsrRouteListener::processRequestPkt(DsrRoutePacket& pkt)
 void DsrRouteListener::processResponsePkt(DsrRoutePacket& pkt)
 {
     // debug temp
-    in_addr tmp;
-    inet_pton(AF_INET, myIP_s, &tmp);
-    in_addr_t myIP = tmp.s_addr;
+    // in_addr tmp;
+    // inet_pton(AF_INET, myIP_s, &tmp);
+    // in_addr_t myIP = tmp.s_addr;
     // debug temp
 
     // 更新路由表
@@ -544,4 +566,12 @@ void DsrRouteListener::unicastPkt(in_addr_t dstIP, DsrRoutePacket& pkt)
     sendto(send_sock, send_buf, len, 0, (struct sockaddr*)&send_addr, sizeof(send_addr));
 
     delete[] send_buf;
+}
+
+
+void DsrRouteListener::startListen()
+{
+    std::thread listen_thread(listenPacket);
+    listen_thread.detach();
+    cout << "DSR Packet listening...\n";
 }
