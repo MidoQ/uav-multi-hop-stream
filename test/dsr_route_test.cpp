@@ -32,11 +32,11 @@ int main(int argc, char** argv)
     myIP = tmp.s_addr;
 
     // 设置目标IP地址列表
-    vector<string> dstList_s(5, string());
-    vector<in_addr_t> dstList(5, 0);
+    vector<string> dstList_s(4, string());
+    vector<in_addr_t> dstList(4, 0);
 
-    for (size_t i = 0; i < 5; ++i) {
-        dstList_s[i] = "192.168.2." + (i + 100 + '0');
+    for (size_t i = 0; i < 4; ++i) {
+        dstList_s[i] = "192.168.2." + std::to_string(i + 100);
         inet_pton(AF_INET, dstList_s[i].c_str(), &tmp);
         dstList[i] = tmp.s_addr;
     }
@@ -50,11 +50,16 @@ int main(int argc, char** argv)
         DsrRouteGetter getter;
         int timeout_sec = 3;
 
-        for (size_t i = 0; i < 5; ++i) {
+        for (size_t i = 0; i < dstList.size(); ++i) {
             int msec = distr(eng);
             sleep_for(milliseconds(msec));
             if (dstList[i] != myIP) {
-                getter.getNextHop(dstList[i], timeout_sec);
+                try {
+                    cout << "Requesting route to " << dstList_s[i] << endl;
+                    getter.getNextHop(dstList[i], timeout_sec);
+                } catch (const char* msg) {
+                    cerr << msg << endl;
+                }
             }
         }
     };
@@ -75,14 +80,26 @@ int main(int argc, char** argv)
 
     sleep_for(seconds(1));
 
-    thread req1(requester);
-    thread req2(requester);
-
     thread printer(routeTablePrinter);
 
-    req1.join();
-    req2.join();
+    if (strcmp(myIP_s, "192.168.2.100") == 0) {
+        thread req1(requester);
+        thread req2(requester);
+
+        req1.join();
+        req2.join();
+    }
+
     printer.join();
+
+    // 主线程永久挂起
+    mutex mtx;
+    condition_variable cv;
+    bool notified = false;
+    unique_lock<mutex> lock(mtx);
+    while(!notified) {
+        cv.wait(lock);
+    }
 
     return 0;
 }

@@ -56,6 +56,9 @@
         "utility": "cpp",
         "mutex": "cpp",
         "ranges": "cpp",
-        "stop_token": "cpp"
+        "stop_token": "cpp",
+        "set": "cpp",
+        "fstream": "cpp",
+        "sstream": "cpp"
     }
 }

@@ -244,7 +244,7 @@ class DsrReqIdRecorder {
     friend class DsrRouteListener;
 
 private:
-    std::unordered_set<unsigned int> idHistory;
+    std::unordered_map<in_addr_t, std::unordered_set<unsigned int>> idHistory;
 
 private:
     DsrReqIdRecorder();
@@ -253,12 +253,12 @@ private:
 
     /// @brief 记录一个已处理的路由请求ID
     /// @param reqID 路由请求ID
-    void addReqID(uint32_t reqID);
+    void addReqID(in_addr_t srcIP, uint32_t reqID);
 
     /// @brief 判断路由请求ID是否已记录过
     /// @param reqID 路由请求ID
     /// @return =true 已记录 =false 未记录
-    bool reqIDExist(uint32_t reqID);
+    bool reqIDExist(in_addr_t srcIP, uint32_t reqID);
 
 public:
     ~DsrReqIdRecorder();

@@ -4,7 +4,7 @@ project(uav-net-2 VERSION 0.1.0)
 include(CTest)
 enable_testing()
 
-# set(CMAKE_SYSROOT /opt/fsl-imx-xwayland/5.4-zeus/sysroots/aarch64-poky-linux)
+set(CMAKE_SYSROOT /opt/fsl-imx-xwayland/5.4-zeus/sysroots/aarch64-poky-linux)
 set(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
 
 include(CheckCXXCompilerFlag)
