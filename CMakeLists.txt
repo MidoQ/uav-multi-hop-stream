@@ -23,7 +23,7 @@ else()
 endif()
 
 set(MODULE_CXXFILE
-   utils.cpp
+   utils.cpp sys_config.cpp
    dsr_route.cpp topo.cpp
    sdn_cmd.cpp video_stream.cpp)
 
@@ -33,6 +33,8 @@ set(MODULE_CXXFILE
 add_executable(dsr_route_test test/dsr_route_test.cpp ${MODULE_CXXFILE})
 target_link_libraries(dsr_route_test pthread)
 
+add_executable(sys_config_test test/sys_config_test.cpp sys_config.cpp)
+target_link_libraries(sys_config_test pthread)
 
 set(CPACK_PROJECT_NAME ${PROJECT_NAME})
 set(CPACK_PROJECT_VERSION ${PROJECT_VERSION})
