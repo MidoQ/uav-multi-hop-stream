@@ -12,6 +12,12 @@ NodeConfig::NodeConfig()
     sinkNodeIP = 0;
     strcpy(myIP_s, "000.000.000.000");
     strcpy(sinkNodeIP_s, "000.000.000.000");
+    strcpy(broadcast_IP_s, "192.168.2.255");
+
+    in_addr tmp;
+    inet_pton(AF_INET, broadcast_IP_s, &tmp);
+    broadcast_IP = tmp.s_addr;
+
     initParamMap();
 
     cout << "Node config initializing...\n";
@@ -124,4 +130,5 @@ void NodeConfig::printNodeConfig()
     cout << "positionY: " << positionY << '\n';
     cout << "myIP: " << myIP_s << "  [0x" << std::hex << myIP << "]\n";
     cout << "sinkNodeIP: " << sinkNodeIP_s << "  [0x" << std::hex << sinkNodeIP << "]\n";
+    cout << "broadcastIP: " << broadcast_IP_s << "  [0x" << std::hex << broadcast_IP << "]\n";
 }

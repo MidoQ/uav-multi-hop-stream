@@ -1,5 +1,6 @@
 #include "../dsr_route.h"
 #include "../utils.h"
+#include "../sys_config.h"
 #include <iostream>
 #include <string>
 #include <random>
@@ -8,8 +9,8 @@ using namespace std;
 
 #define NODE_NUMS 6
 
-char myIP_s[INET_ADDRSTRLEN];
-in_addr_t myIP;
+
+// in_addr_t myIP;
 
 void testDsrRoutePacket();
 
@@ -19,21 +20,16 @@ int main(int argc, char** argv)
 
     // testDsrRoutePacket();
 
-    if (argc != 2) {
-        cout << "Usage: " << argv[0] << "myselfIP\n";
-        cout << "Process exit...\n";
-        exit(0);
-    }
-
-    // 读取本节点IP地址
-    strcpy(myIP_s, argv[1]);
-    cout << "My self IP: " << myIP_s << '\n';
-
     in_addr tmp;
-    inet_pton(AF_INET, myIP_s, &tmp);
-    myIP = tmp.s_addr;
+    char myIP_s[INET_ADDRSTRLEN];
+
+    NodeConfig& config = NodeConfig::getInstance();
+    config.printNodeConfig();
+    in_addr_t myIP = config.getMyIP();
+    config.getMyIP_s(myIP_s);
 
     // 设置目标IP地址列表
+
     vector<string> dstList_s(NODE_NUMS, string());
     vector<in_addr_t> dstList(NODE_NUMS, 0);
 

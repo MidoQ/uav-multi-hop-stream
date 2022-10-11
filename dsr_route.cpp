@@ -1,11 +1,8 @@
 #include "dsr_route.h"
+#include "sys_config.h"
 
 /* Global variables */
 std::atomic<uint32_t> myReqID = {0};
-// char myIP_s[] = "192.168.2.101"; // debug temp
-extern char myIP_s[];
-extern in_addr_t myIP;
-char broadcast_IP_s[] = "192.168.2.255"; // debug temp
 
 enum RouteRespondState : char {
     waiting = 1,    // requester 正在等待路由回复
@@ -354,12 +351,13 @@ in_addr_t DsrRouteGetter::getNextHop(in_addr_t dstIP, int timeout)
 
 void DsrRouteGetter::sendRequest(in_addr_t dstIP)
 {
-    // in_addr_t myIP;     // debug temp
-    in_addr tmp;
     int brd_sock;
     struct sockaddr_in brd_addr;
     char send_buf[DSR_PKT_GENERAL_LEN];
 
+    NodeConfig& config = NodeConfig::getInstance();
+    in_addr_t myIP = config.getMyIP();
+    in_addr_t broadcast_IP = config.getBroadcastIP();
     int so_brd = 1;
 
     // 设置UDP套接字，广播模式
@@ -367,15 +365,12 @@ void DsrRouteGetter::sendRequest(in_addr_t dstIP)
 
     memset(&brd_addr, 0, sizeof(brd_addr));
     brd_addr.sin_family = AF_INET;
-    inet_pton(AF_INET, broadcast_IP_s, &tmp);
-    brd_addr.sin_addr.s_addr = tmp.s_addr;
+    brd_addr.sin_addr.s_addr = broadcast_IP;
     brd_addr.sin_port = hton16(PORT_DSR);
 
     setsockopt(brd_sock, SOL_SOCKET, SO_BROADCAST, (void*)&so_brd, sizeof(so_brd));
 
     // 创建DSR报文
-    // inet_pton(AF_INET, myIP_s, &tmp); // debug temp
-    // myIP = tmp.s_addr;
     DsrRoutePacket pkt(DsrPacketType::request, myIP, dstIP);
 
     pkt.setHop(1);      // 准备发送的报文，跳数已经变为到接收者的跳数
@@ -410,7 +405,9 @@ void DsrRouteGetter::routeWaitTimer(in_addr_t dstIP, int timeout)
 DsrRouteListener::DsrRouteListener()
 {
     struct sockaddr_in recv_addr;
-    in_addr tmp;
+
+    NodeConfig& config = NodeConfig::getInstance();
+    in_addr_t broadcast_IP = config.getBroadcastIP();
     int so_brd = 1;
 
     packetBuf = new char[DSR_PKT_MAX_LEN + 1];
@@ -433,8 +430,7 @@ DsrRouteListener::DsrRouteListener()
 
     memset(&brd_addr, 0, sizeof(brd_addr));
     brd_addr.sin_family = AF_INET;
-    inet_pton(AF_INET, broadcast_IP_s, &tmp);
-    brd_addr.sin_addr.s_addr = tmp.s_addr;
+    brd_addr.sin_addr.s_addr = broadcast_IP;
     brd_addr.sin_port = hton16(PORT_DSR);
 
     setsockopt(brd_sock, SOL_SOCKET, SO_BROADCAST, (void*)&so_brd, sizeof(so_brd));
@@ -469,11 +465,9 @@ void DsrRouteListener::listenPacket()
 
 void DsrRouteListener::processRequestPkt(DsrRoutePacket& pkt)
 {
-    // debug temp
-    // in_addr tmp;
-    // inet_pton(AF_INET, myIP_s, &tmp);
-    // in_addr_t myIP = tmp.s_addr;
-    // debug temp
+    NodeConfig& config = NodeConfig::getInstance();
+    in_addr_t myIP = config.getMyIP();
+    in_addr_t broadcast_IP = config.getBroadcastIP();
 
     // 本节点也会收到自己的广播，收到后直接丢弃
     if (pkt.getSrcIP() == myIP) {
@@ -515,11 +509,8 @@ void DsrRouteListener::processRequestPkt(DsrRoutePacket& pkt)
 
 void DsrRouteListener::processResponsePkt(DsrRoutePacket& pkt)
 {
-    // debug temp
-    // in_addr tmp;
-    // inet_pton(AF_INET, myIP_s, &tmp);
-    // in_addr_t myIP = tmp.s_addr;
-    // debug temp
+    NodeConfig& config = NodeConfig::getInstance();
+    in_addr_t myIP = config.getMyIP();
 
     // 更新路由表
     DsrRouteTable& table = DsrRouteTable::getInstance();

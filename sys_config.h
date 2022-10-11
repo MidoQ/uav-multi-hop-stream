@@ -20,8 +20,10 @@ private:
     double positionY;
     in_addr_t myIP;
     in_addr_t sinkNodeIP;
+    in_addr_t broadcast_IP;
     char myIP_s[INET_ADDRSTRLEN];
     char sinkNodeIP_s[INET_ADDRSTRLEN];
+    char broadcast_IP_s[INET_ADDRSTRLEN];
     std::unordered_map<std::string, int> paramMap;
 
 private:
@@ -34,7 +36,6 @@ private:
     void initParamMap();
 
     void assignParam(std::string& paramName, std::string& paramVal);
-
 
 public:
     ~NodeConfig();
@@ -70,6 +71,14 @@ public:
     
     void getSinkNodeIP_s(char* destBuf) {
         memcpy(destBuf, sinkNodeIP_s, INET_ADDRSTRLEN);
+    }
+
+    in_addr_t getBroadcastIP() {
+        return broadcast_IP;
+    }
+
+    void getBroadcastIP_s(char* destBuf) {
+        memcpy(destBuf, broadcast_IP_s, INET_ADDRSTRLEN);
     }
 
     void printNodeConfig();
