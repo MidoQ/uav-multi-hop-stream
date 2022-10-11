@@ -6,6 +6,8 @@
 
 using namespace std;
 
+#define NODE_NUMS 6
+
 char myIP_s[INET_ADDRSTRLEN];
 in_addr_t myIP;
 
@@ -32,10 +34,10 @@ int main(int argc, char** argv)
     myIP = tmp.s_addr;
 
     // 设置目标IP地址列表
-    vector<string> dstList_s(4, string());
-    vector<in_addr_t> dstList(4, 0);
+    vector<string> dstList_s(NODE_NUMS, string());
+    vector<in_addr_t> dstList(NODE_NUMS, 0);
 
-    for (size_t i = 0; i < 4; ++i) {
+    for (size_t i = 0; i < NODE_NUMS; ++i) {
         dstList_s[i] = "192.168.2." + std::to_string(i + 100);
         inet_pton(AF_INET, dstList_s[i].c_str(), &tmp);
         dstList[i] = tmp.s_addr;
@@ -58,7 +60,7 @@ int main(int argc, char** argv)
                     cout << "Requesting route to " << dstList_s[i] << endl;
                     getter.getNextHop(dstList[i], timeout_sec);
                 } catch (const char* msg) {
-                    cerr << msg << endl;
+                    cerr << msg << " [ Dst " << dstList_s[i] << " ]" << endl;
                 }
             }
         }
