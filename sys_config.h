@@ -1,21 +1,10 @@
 #ifndef _SYS_CONFIG
 #define _SYS_CONFIG
 
-// #include "utils.h"
 #include <arpa/inet.h>
-// #include <atomic>
-// #include <chrono>
-// #include <condition_variable>
 #include <cstring>
 #include <iostream>
-// #include <map>
-// #include <mutex>
-// #include <sys/socket.h>
-// #include <thread>
-// #include <unistd.h>
 #include <unordered_map>
-// #include <unordered_set>
-// #include <vector>
 #include <fstream>
 #include <string>
 
