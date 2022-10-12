@@ -74,7 +74,10 @@ int main(int argc, char** argv)
 
     // 启动所有线程
     DsrRouteListener& listener = DsrRouteListener::getInstance();
-    listener.startListen();
+    // listener.startListen();
+    thread listen_thread(listener.listenPacket);
+
+    thread listen_thread2(listener.listenPacket);
 
     sleep_for(seconds(1));
 
@@ -88,6 +91,8 @@ int main(int argc, char** argv)
         req2.join();
     }
 
+    listen_thread.join();
+    listen_thread2.join();
     printer.join();
 
     // 主线程永久挂起

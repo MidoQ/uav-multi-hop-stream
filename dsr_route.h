@@ -298,13 +298,12 @@ private:
     int recv_sock, brd_sock;
     char* packetBuf;
     struct sockaddr_in brd_addr;
+    bool isListening;
 
 private:
     DsrRouteListener();
     DsrRouteListener(const DsrRouteListener&) = delete;
     DsrRouteListener& operator=(const DsrRouteListener&) = delete;
-
-    static void listenPacket();     // thread function
 
     void processRequestPkt(DsrRoutePacket& pkt);
 
@@ -323,9 +322,13 @@ public:
         return instance;
     }
 
-    void startListen(); // TODO: 在这里创建线程，并循环监听相应端口
+    /// @brief 开始监听DSR报文的线程函数，仅能第一次创建有效
+    static void listenPacket();     // thread function
 };
 
+/**
+ * @brief 打印路由表，仅作调试用
+ */
 class routeTableProbe {
 public:
     void printRouteTable() {

@@ -194,6 +194,7 @@ bool DsrRouteTable::updateRouteItem(in_addr_t _dstIP, in_addr_t _nextHopIP, int 
         return true;
     } else if (_metric < it->second.metric) {
         // 有此表项，但距离更小时才插入
+        // TODO: 此处策略可能不对。DSR总是更新一个路由表项，不论其距离，这样才能及时更新过期表项
         routeTable[_dstIP] = routeTableVal(_nextHopIP, _metric);
         return true;
     }
@@ -406,6 +407,8 @@ DsrRouteListener::DsrRouteListener()
 {
     struct sockaddr_in recv_addr;
 
+    isListening = false;
+
     NodeConfig& config = NodeConfig::getInstance();
     in_addr_t broadcast_IP = config.getBroadcastIP();
     int so_brd = 1;
@@ -447,6 +450,13 @@ void DsrRouteListener::listenPacket()
     int recvLen;
     DsrRoutePacket packetInfo;
     DsrRouteListener& listener = DsrRouteListener::getInstance();
+
+    if (listener.isListening) {
+        cout << "Dsr Route already listening!\n";
+        return;
+    }
+    
+    listener.isListening = true;
 
     while (1) {
         recvLen = recvfrom(listener.recv_sock, listener.packetBuf, DSR_PKT_MAX_LEN, 0, NULL, 0);
@@ -573,12 +583,4 @@ void DsrRouteListener::unicastPkt(in_addr_t dstIP, DsrRoutePacket& pkt)
     sendto(send_sock, send_buf, len, 0, (struct sockaddr*)&send_addr, sizeof(send_addr));
 
     delete[] send_buf;
-}
-
-
-void DsrRouteListener::startListen()
-{
-    std::thread listen_thread(listenPacket);
-    listen_thread.detach();
-    cout << "DSR Packet listening...\n";
 }
