@@ -22,6 +22,8 @@ else()
    message(FATAL_ERROR "The compiler ${CMAKE_CXX_COMPILER} has no C++11 support. Please use a different C++ compiler.")
 endif()
 
+add_definitions(-DTOPO_TEST)
+
 set(MODULE_CXXFILE
    utils.cpp sys_config.cpp
    dsr_route.cpp topo.cpp
@@ -35,6 +37,9 @@ target_link_libraries(dsr_route_test pthread)
 
 add_executable(sys_config_test test/sys_config_test.cpp sys_config.cpp)
 target_link_libraries(sys_config_test pthread)
+
+add_executable(topo_test test/topo_test.cpp ${MODULE_CXXFILE})
+target_link_libraries(topo_test pthread)
 
 set(CPACK_PROJECT_NAME ${PROJECT_NAME})
 set(CPACK_PROJECT_VERSION ${PROJECT_VERSION})
