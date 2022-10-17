@@ -18,22 +18,42 @@ int main(int argc, char** argv)
 {
     // testLivePacket();
 
-    // LiveBroadcast& liveBroadcast = LiveBroadcast::getInstance();
-
-    NeighborTableProbe probe;
+    // testNeibTable();
 
     auto printer = [&]() {
-        while (1) {
+        NeighborTableProbe probe;
+        for (int i = 0; i < 5; ++i) {
             sleep_for(seconds(3));
             probe.printNeighborTable();
         }
     };
 
-    std::thread liveBrd_thread(LiveBroadcast::pktBroadcasting);
-    std::thread liveLis_thread(LiveBroadcast::pktListening);
+    NodeConfig& nodeConfig = NodeConfig::getInstance(); // 初始化
+    nodeConfig.printNodeConfig();
+
+    NeighborTable& table = NeighborTable::getInstance();
+    DsrRouteListener& routeListener = DsrRouteListener::getInstance();
+    LiveBroadcast& liveBrd = LiveBroadcast::getInstance();
+    NeighborListener& neibListener = NeighborListener::getInstance();
+    NeighborReporter& neibReporter = NeighborReporter::getInstance();
+
+    std::thread route_listen_thread(routeListener.listenPacket);
+    std::thread liveBrd_thread(liveBrd.pktBroadcasting);
+    std::thread liveLis_thread(liveBrd.pktListening);
     std::thread printer_thread(printer);
+
+    sleep_for(seconds(10));
+
+    std::thread neib_listen_thread(neibListener.neighborListen);
+    if (nodeConfig.getNodeType() == NodeType::common) {
+        std::thread neib_report_thread(neibReporter.neighborReport);
+        neib_report_thread.join();
+    }
+
+    route_listen_thread.join();
     liveBrd_thread.join();
     liveLis_thread.join();
+    neib_listen_thread.join();
     printer_thread.join();
 
     return 0;
@@ -61,4 +81,23 @@ void testLivePacket()
     pkt2.parseFromBuf(pktBuf);
 
     pkt2.serializeToBuf(pktBuf2);
+}
+
+void testNeibTable()
+{
+    NeighborTableProbe probe;
+
+    auto printer = [&]() {
+        while (1) {
+            sleep_for(seconds(3));
+            probe.printNeighborTable();
+        }
+    };
+
+    std::thread liveBrd_thread(LiveBroadcast::pktBroadcasting);
+    std::thread liveLis_thread(LiveBroadcast::pktListening);
+    std::thread printer_thread(printer);
+    liveBrd_thread.join();
+    liveLis_thread.join();
+    printer_thread.join();
 }

@@ -2,6 +2,7 @@
 #define _TOPO_H
 
 #include "sys_config.h"
+#include "dsr_route.h"
 #include "utils.h"
 #include <arpa/inet.h>
 #include <chrono>
@@ -20,7 +21,9 @@
 #define PORT_NEIB_REPORT 9390
 #define LIVE_PKT_MAX_LEN 100
 #define NEIB_PKT_MAX_LEN 800
+#define NEIB_PKT_HEADER_LEN 72
 
+using std::cerr;
 using std::cout;
 using std::endl;
 using namespace std::this_thread; // sleep_for, sleep_until
@@ -188,7 +191,7 @@ public:
 /// @brief 将节点信息及全局邻居表信息打包为邻居汇报报文（字符串）
 /// @param pktBuf 字符串缓冲区
 /// @return 打包后的字符串长度
-static int seiralizeNeighborPkt(char* pktBuf);
+static size_t serializeNeighborPkt(char* pktBuf);
 
 /// @brief 将邻居汇报报文（字符串）解析到全局拓扑图中（仅汇聚节点）
 /// @param pktBuf 
@@ -198,6 +201,11 @@ static void parseNeighborPkt(const char* pktBuf);
  * @brief 邻居汇报报文发送
  */
 class NeighborReporter {
+private:
+    int intervalSec; // 邻居表汇报的间隔，默认为5秒
+    int send_sock;
+    struct sockaddr_in send_addr;
+
 private:
     NeighborReporter();
     NeighborReporter(const NeighborReporter&) = delete;
@@ -210,6 +218,9 @@ public:
         static NeighborReporter instance;
         return instance;
     }
+
+    /// @brief 线程函数，定期向汇聚节点报告邻居表信息
+    static void neighborReport();
 };
 
 /**
@@ -217,9 +228,20 @@ public:
  */
 class NeighborListener {
 private:
+    int listen_sock, send_sock;
+    struct sockaddr_in listen_addr, send_addr;
+private:
     NeighborListener();
     NeighborListener(const NeighborListener&) = delete;
     NeighborListener& operator=(const NeighborListener&) = delete;
+
+    static void printNeighborPkt(char* pktBuf);
+
+    static void relayNeighborPkt(const char* pktBuf, size_t len);
+
+    /// @brief 线程函数，接受到客户端连接后，为其新建一个线程进行数据接收和处理
+    /// @param clnt_sock 客户端套接字
+    static void clntHandler(int clnt_sock);
 
 public:
     ~NeighborListener();
@@ -228,6 +250,9 @@ public:
         static NeighborListener instance;
         return instance;
     }
+
+    /// @brief 线程函数，监听邻居表信息并转发（普通节点）或解析（汇聚节点）
+    static void neighborListen();
 };
 
 #ifdef TOPO_TEST

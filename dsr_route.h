@@ -29,6 +29,7 @@
 #define DSR_PKT_GENERAL_LEN 100
 
 // using namespace std;
+using std::cerr;
 using std::cout;
 using std::endl;
 using namespace std::this_thread; // sleep_for, sleep_until
@@ -224,6 +225,11 @@ private:
     /// @return =true 查找到表项，并保存在item中 =false 未查找到表项
     bool findRouteItem(in_addr_t dstIP, routeTableVal& item);
 
+    /// @brief 删除一条表项
+    /// @param dstIP 欲删除表项的目标节点IP
+    /// @return true 成功删除  false 表项不存在
+    bool deleteRouteItem(in_addr_t dstIP);
+
     void printTable();
 
 public:
@@ -270,6 +276,10 @@ public:
     }
 };
 
+// 请求下一跳IP的模式
+#define CHECK_TABLE_FIRST 1
+#define SEND_REQ_ANYWAY 2
+
 /**
  * @brief 等待其他应用线程发起的路由请求，并返回查找的路由
  */
@@ -283,11 +293,20 @@ public:
     DsrRouteGetter& operator=(const DsrRouteGetter&) = delete;
     ~DsrRouteGetter();
 
+    /// @brief 定时器，用于等待路由请求超时
+    /// @param dstIP 等待的路由请求目的IP
+    /// @param timeout 超时时间（秒）
     static void routeWaitTimer(in_addr_t dstIP, int timeout);
 
-    in_addr_t getNextHop(const char* dstIP, int timeout);
+    /// @brief 请求到目的节点的下一跳节点IP，是另一重载的简单包装
+    in_addr_t getNextHop(const char* dstIP, int timeout, int mode = CHECK_TABLE_FIRST);
 
-    in_addr_t getNextHop(in_addr_t dstIP, int timeout);
+    /// @brief 请求到目的节点的下一跳节点IP
+    /// @param dstIP 目的节点IP
+    /// @param timeout 超时时间（秒）
+    /// @param mode CHECK_TABLE_FIRST 首先检查路由表缓存  SEND_REQ_ANYWAY 直接发起路由请求广播
+    /// @return 下一跳节点的IP地址
+    in_addr_t getNextHop(in_addr_t dstIP, int timeout, int mode = CHECK_TABLE_FIRST);
 };
 
 /**

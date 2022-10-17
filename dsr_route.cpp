@@ -204,7 +204,7 @@ bool DsrRouteTable::updateRouteItem(in_addr_t _dstIP, in_addr_t _nextHopIP, int 
 bool DsrRouteTable::findRouteItem(in_addr_t dstIP, routeTableVal& item)
 {
     std::map<in_addr_t, routeTableVal>::iterator it = routeTable.find(dstIP);
-    
+
     if (it == routeTable.end()) {
         return false;
     }
@@ -212,6 +212,18 @@ bool DsrRouteTable::findRouteItem(in_addr_t dstIP, routeTableVal& item)
     item.nextHopIP = it->second.nextHopIP;
     item.metric = it->second.metric;
     return true;
+}
+
+bool DsrRouteTable::deleteRouteItem(in_addr_t dstIP)
+{
+    std::map<in_addr_t, routeTableVal>::iterator it = routeTable.find(dstIP);
+
+    if (it == routeTable.end()) {
+        return false;
+    }
+
+    routeTable.erase(dstIP);
+    return false;
 }
 
 void DsrRouteTable::printTable()
@@ -268,24 +280,37 @@ DsrRouteGetter::~DsrRouteGetter()
 {
 }
 
-in_addr_t DsrRouteGetter::getNextHop(const char* dstIP, int timeout)
+in_addr_t DsrRouteGetter::getNextHop(const char* dstIP, int timeout, int mode)
 {
     in_addr tmp;
     inet_pton(AF_INET, dstIP, &tmp);
-    return getNextHop(tmp.s_addr, timeout);
+    return getNextHop(tmp.s_addr, timeout, mode);
 }
 
-in_addr_t DsrRouteGetter::getNextHop(in_addr_t dstIP, int timeout)
+in_addr_t DsrRouteGetter::getNextHop(in_addr_t dstIP, int timeout, int mode)
 {
+    if (mode != CHECK_TABLE_FIRST && mode != SEND_REQ_ANYWAY) {
+        cerr << __func__ << "Invalid parameter [mode]!\n";
+        throw("ParamInvalid");
+    }
+
     DsrRouteTable& table = DsrRouteTable::getInstance();
     routeTableVal tableItem;
 
-    if (table.findRouteItem(dstIP, tableItem)) {
+    if (mode == CHECK_TABLE_FIRST && table.findRouteItem(dstIP, tableItem)) {
         // 找到已缓存的表项，直接返回下一跳地址
         return tableItem.nextHopIP;
     }
     else {
         // 未找到已缓存的表项，发起路由请求，并等待监听线程的通知
+
+        // 删除可能存在的过期表项
+        bool itemDeleted = table.deleteRouteItem(dstIP);
+        if (itemDeleted) {
+            char ipAddr_s[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &dstIP, ipAddr_s, INET_ADDRSTRLEN);
+            cout << __func__ << "Route to " << ipAddr_s << " deleted!\n";
+        }
 
         // 广播路由请求
         sendRequest(dstIP);
@@ -306,10 +331,10 @@ in_addr_t DsrRouteGetter::getNextHop(in_addr_t dstIP, int timeout)
                 if (routeTable.findRouteItem(dstIP, item))
                     return item.nextHopIP;
                 else
-                    throw("Destination Unreachable");
+                    throw("DestinationUnreachable");
             }
             else if (it->second == RouteRespondState::timeout) {
-                throw("Destination Unreachable");
+                throw("DestinationUnreachable");
             }
         }
         else {
@@ -334,7 +359,7 @@ in_addr_t DsrRouteGetter::getNextHop(in_addr_t dstIP, int timeout)
 
             if (it->second == RouteRespondState::timeout) {
                 lock.unlock();
-                throw("Destination Unreachable");
+                throw("DestinationUnreachable");
             }
         }
 
@@ -346,7 +371,7 @@ in_addr_t DsrRouteGetter::getNextHop(in_addr_t dstIP, int timeout)
         if (routeTable.findRouteItem(dstIP, item))
             return item.nextHopIP;
         else
-            throw("Destination Unreachable");
+            throw("DestinationUnreachable");
     }
 }
 
