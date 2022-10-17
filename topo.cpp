@@ -49,6 +49,8 @@ int LivePacket::serializeToBuf(char* pktBuf)
     return 68;
 }
 
+/* LiveBroadcast */
+
 LiveBroadcast::LiveBroadcast()
 {
     isBroadcasting = false;
@@ -154,6 +156,8 @@ void LiveBroadcast::pktListening()
         neibTable.addNeighbor(pkt.getIP(), pkt.getPositionX(), pkt.getPositionY());
     }
 }
+
+/* NeighborTable */
 
 NeighborTable::NeighborTable()
 {
@@ -275,46 +279,6 @@ size_t NeighborTable::neighbors2Buf(char* buf)
     return merged.size();
 }
 
-#ifdef TOPO_TEST
-
-void NeighborTableProbe::printNeighborTable() {
-    NeighborTable& table = NeighborTable::getInstance();
-
-    std::unordered_map<in_addr_t, Position> merged;
-
-    std::unique_lock<std::mutex> lock1(table.mtx4InsertMap);
-    std::unique_lock<std::mutex> lock2(table.mtx4ClearMap);
-
-    size_t clearIndex = table.insertIndex == 0 ? 1 : 0;
-    for (auto it = table.neighbors[clearIndex].begin(); it != table.neighbors[clearIndex].end(); it++) {
-        merged[it->first] = it->second;
-    }
-    for (auto it = table.neighbors[table.insertIndex].begin(); it != table.neighbors[table.insertIndex].end(); it++) {
-        merged[it->first] = it->second;
-    }
-
-    lock2.unlock();
-    lock1.unlock();
-
-    in_addr tmp;
-    char ipStr[INET_ADDRSTRLEN];
-    memset(ipStr, 0, INET_ADDRSTRLEN);
-
-    cout << "Neighbor count: " << table.getNeighborCount() << '\n';
-    cout << "--------------- [Neigbors] ---------------\n"
-         << "IP\t\tposX\t\tposY\n";
-    for (auto it = merged.begin(); it != merged.end(); it++) {
-        inet_ntop(AF_INET, &(it->first), ipStr, INET_ADDRSTRLEN);
-        cout << ipStr << '\t'
-             << std::fixed << std::setprecision(3)
-             << std::setw(8) << std::internal << it->second.x << '\t' 
-             << std::setw(8) << std::internal << it->second.y << '\n';
-    }
-    cout << "------------------------------------------\n" << endl;
-}
-
-#endif
-
 size_t serializeNeighborPkt(char* pktBuf)
 {
     uint32_t* pNeibCount = (uint32_t*)pktBuf;
@@ -340,6 +304,8 @@ void parseNeighborPkt(const char* pktBuf)
 {
 
 }
+
+/* NeighborReporter */
 
 NeighborReporter::NeighborReporter()
 {
@@ -411,6 +377,8 @@ void NeighborReporter::neighborReport()
     }
 }
 
+/* NeighborListener */
+
 NeighborListener::NeighborListener()
 {
     int option = 1;
@@ -438,7 +406,6 @@ NeighborListener::~NeighborListener()
 }
 
 std::mutex mtx4printNeibPkt;
-
 void NeighborListener::printNeighborPkt(char* pktBuf)
 {
     size_t neibCount;
@@ -595,3 +562,43 @@ void NeighborListener::clntHandler(int clnt_sock)
         }
     }
 }
+
+#ifdef TOPO_TEST
+
+void NeighborTableProbe::printNeighborTable() {
+    NeighborTable& table = NeighborTable::getInstance();
+
+    std::unordered_map<in_addr_t, Position> merged;
+
+    std::unique_lock<std::mutex> lock1(table.mtx4InsertMap);
+    std::unique_lock<std::mutex> lock2(table.mtx4ClearMap);
+
+    size_t clearIndex = table.insertIndex == 0 ? 1 : 0;
+    for (auto it = table.neighbors[clearIndex].begin(); it != table.neighbors[clearIndex].end(); it++) {
+        merged[it->first] = it->second;
+    }
+    for (auto it = table.neighbors[table.insertIndex].begin(); it != table.neighbors[table.insertIndex].end(); it++) {
+        merged[it->first] = it->second;
+    }
+
+    lock2.unlock();
+    lock1.unlock();
+
+    in_addr tmp;
+    char ipStr[INET_ADDRSTRLEN];
+    memset(ipStr, 0, INET_ADDRSTRLEN);
+
+    cout << "Neighbor count: " << table.getNeighborCount() << '\n';
+    cout << "--------------- [Neigbors] ---------------\n"
+         << "IP\t\tposX\t\tposY\n";
+    for (auto it = merged.begin(); it != merged.end(); it++) {
+        inet_ntop(AF_INET, &(it->first), ipStr, INET_ADDRSTRLEN);
+        cout << ipStr << '\t'
+             << std::fixed << std::setprecision(3)
+             << std::setw(8) << std::internal << it->second.x << '\t' 
+             << std::setw(8) << std::internal << it->second.y << '\n';
+    }
+    cout << "------------------------------------------\n" << endl;
+}
+
+#endif
