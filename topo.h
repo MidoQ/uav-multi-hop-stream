@@ -1,21 +1,25 @@
 #ifndef _TOPO_H
 #define _TOPO_H
 
-#include "sys_config.h"
 #include "dsr_route.h"
+#include "sys_config.h"
 #include "utils.h"
 #include <arpa/inet.h>
+#include <atomic>
 #include <chrono>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
+#include <map>
+#include <mutex>
+#include <queue>
+#include <ratio>
+#include <set>
 #include <string>
 #include <sys/socket.h>
 #include <thread>
-#include <vector>
 #include <unordered_map>
-#include <mutex>
-#include <atomic>
-#include <iomanip>
+#include <vector>
 
 #define PORT_LIVE 9290
 #define PORT_NEIB_REPORT 9390
@@ -171,13 +175,46 @@ public:
 };
 
 /**
+ * @brief 拓扑图边的队列表项
+ * @details 表示一条双向边插入图的时间
+ */
+typedef std::chrono::_V2::steady_clock::time_point std_clock;
+typedef struct LinkQueueItem {
+    in_addr_t sIP;
+    in_addr_t dIP;
+    std_clock timeStamp;
+    LinkQueueItem(in_addr_t _sIP, in_addr_t _dIP, std_clock _timeStamp)
+        : sIP(_sIP)
+        , dIP(_dIP)
+        , timeStamp(_timeStamp)
+    {
+    }
+    LinkQueueItem() = delete;
+} LinkQueueItem;
+
+/**
  * @brief 全局拓扑图单例（仅汇聚节点）
  */
 class TopoGraph {
 private:
+    size_t nodeCount;
+    std::atomic<size_t> timeoutSec;
+    std::mutex mtx4Gragh;
+    std::map<in_addr_t, std::set<in_addr_t>> graph; // 邻接表形式的拓扑图，key为节点IP，value为其相连的邻居节点序列
+    std::queue<LinkQueueItem> linkQueue;
+
+private:
     TopoGraph();
     TopoGraph(const TopoGraph&) = delete;
     TopoGraph& operator=(const TopoGraph&) = delete;
+
+    static void timeoutHandler();
+
+    void addDirectLink(in_addr_t sIP, in_addr_t dIP);
+
+    void removeDirectLink(in_addr_t sIP, in_addr_t dIP);
+
+    void removeLink(in_addr_t sIP, in_addr_t dIP);
 
 public:
     ~TopoGraph();
@@ -186,6 +223,18 @@ public:
         static TopoGraph instance;
         return instance;
     }
+
+    size_t getNodeCount() {
+        return nodeCount;
+    }
+
+    void setTimeoutSec(size_t _timeoutSec) {
+        timeoutSec = _timeoutSec;
+    }
+
+    void addLink(in_addr_t sIP, in_addr_t dIP);
+
+    bool toMatrix(size_t nodeCount, char* matrix[]);
 };
 
 /// @brief 将节点信息及全局邻居表信息打包为邻居汇报报文（字符串）

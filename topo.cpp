@@ -279,6 +279,94 @@ size_t NeighborTable::neighbors2Buf(char* buf)
     return merged.size();
 }
 
+TopoGraph::TopoGraph()
+{
+    nodeCount = 0;
+    timeoutSec = 7;
+    graph.clear();
+}
+
+TopoGraph::~TopoGraph()
+{
+
+}
+
+void TopoGraph::timeoutHandler()
+{
+    TopoGraph& topoGraph = TopoGraph::getInstance();
+
+    struct timeval timeoutVal;
+    while (1) {
+        size_t sec = topoGraph.timeoutSec;
+        timeoutVal.tv_sec = sec;
+        timeoutVal.tv_usec = 0;
+        select(0, NULL, NULL, NULL, &timeoutVal); // 利用select进行延时
+
+        std_clock timeToCheck = std::chrono::steady_clock::now();
+        LinkQueueItem item = topoGraph.linkQueue.front();
+        std::chrono::duration<double, std::milli> diff = timeToCheck - item.timeStamp;
+        if (diff.count() > sec) {
+            topoGraph.removeLink(item.sIP, item.dIP);
+        }
+    }
+}
+
+void TopoGraph::addDirectLink(in_addr_t sIP, in_addr_t dIP)
+{
+    auto it = graph.find(sIP);
+    
+    if (it != graph.end()) {
+        it->second.insert(dIP);
+    } else {
+        std::set<in_addr_t> tmp;
+        tmp.clear();
+        graph[sIP] = tmp;
+        graph[sIP].insert(dIP);
+        nodeCount++;
+    }
+}
+
+void TopoGraph::removeDirectLink(in_addr_t sIP, in_addr_t dIP)
+{
+    auto it = graph.find(sIP);
+
+    if (it != graph.end()) {
+        auto itForVal = it->second.find(dIP);
+        if (itForVal != it->second.end()) {
+            it->second.erase(itForVal);
+            if (it->second.empty()) {
+                graph.erase(it);
+                nodeCount--;
+            }
+        }
+    }
+}
+
+void TopoGraph::removeLink(in_addr_t sIP, in_addr_t dIP)
+{
+    std::unique_lock<std::mutex> lock(mtx4Gragh);
+    removeDirectLink(sIP, dIP);
+    removeDirectLink(dIP, sIP);
+    lock.unlock();
+}
+
+void TopoGraph::addLink(in_addr_t sIP, in_addr_t dIP)
+{
+    std::unique_lock<std::mutex> lock(mtx4Gragh);
+    addDirectLink(sIP, dIP);
+    addDirectLink(dIP, sIP);
+    std_clock stamp = std::chrono::steady_clock::now();
+    LinkQueueItem item(sIP, dIP, stamp);
+    linkQueue.push(item);
+    lock.unlock();
+}
+
+bool TopoGraph::toMatrix(size_t nodeCount, char* matrix[])
+{
+    // TODO
+    return false;
+}
+
 size_t serializeNeighborPkt(char* pktBuf)
 {
     uint32_t* pNeibCount = (uint32_t*)pktBuf;
