@@ -20,9 +20,9 @@ int main(int argc, char** argv)
 
     // testNeibTable();
 
-    auto printer = [&]() {
+    auto printNeibTable = [&]() {
         NeighborTableProbe probe;
-        for (int i = 0; i < 5; ++i) {
+        for (int i = 0; i < 100; ++i) {
             sleep_for(seconds(3));
             probe.printNeighborTable();
         }
@@ -32,15 +32,44 @@ int main(int argc, char** argv)
     nodeConfig.printNodeConfig();
 
     NeighborTable& table = NeighborTable::getInstance();
+    TopoGraph& topo = TopoGraph::getInstance();
     DsrRouteListener& routeListener = DsrRouteListener::getInstance();
     LiveBroadcast& liveBrd = LiveBroadcast::getInstance();
     NeighborListener& neibListener = NeighborListener::getInstance();
     NeighborReporter& neibReporter = NeighborReporter::getInstance();
 
+    auto printNeibMatrix = [&]() {
+        std::vector<in_addr_t> nodeList;
+        std::vector<std::vector<char>> mat;
+        while (1) {
+            sleep_for(seconds(5));
+
+            topo.toMatrix(nodeList, mat);
+
+            for (size_t i = 0; i < nodeList.size(); ++i) {
+                // uint32_t nodeId = (0xFF000000 & nodeList[i]) >> 24;
+                uint32_t nodeId = nodeList[i] >> 24;
+                cout << '\t' << std::dec << nodeId;
+            }
+            cout << '\n';
+
+            for (size_t i = 0; i < mat.size(); ++i) {
+                // uint32_t nodeId = (0xFF000000 & nodeList[i]) >> 24;
+                uint32_t nodeId = nodeList[i] >> 24;
+                cout << nodeId << '\t';
+                for (size_t j = 0; j < mat[i].size(); ++j) {
+                    cout << (int)mat[i][j] << '\t';
+                }
+                cout << '\n';
+            }
+            cout << endl;
+        }
+    };
+
     std::thread route_listen_thread(routeListener.listenPacket);
     std::thread liveBrd_thread(liveBrd.pktBroadcasting);
     std::thread liveLis_thread(liveBrd.pktListening);
-    std::thread printer_thread(printer);
+    std::thread neibTablePrinter_thread(printNeibTable);
 
     sleep_for(seconds(10));
 
@@ -49,12 +78,16 @@ int main(int argc, char** argv)
         std::thread neib_report_thread(neibReporter.neighborReport);
         neib_report_thread.join();
     }
+    else {
+        std::thread matPrinter_thread(printNeibMatrix);
+        matPrinter_thread.join();
+    }
 
     route_listen_thread.join();
     liveBrd_thread.join();
     liveLis_thread.join();
     neib_listen_thread.join();
-    printer_thread.join();
+    neibTablePrinter_thread.join();
 
     return 0;
 }

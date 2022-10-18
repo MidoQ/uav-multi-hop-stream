@@ -192,6 +192,16 @@ typedef struct LinkQueueItem {
     LinkQueueItem() = delete;
 } LinkQueueItem;
 
+typedef struct TopoMat {
+    std::vector<in_addr_t> nodeList;
+    std::vector<std::vector<char>> mat; // 避免使用vector<bool>
+    TopoMat(size_t nodeCount)
+        : nodeList(std::vector<in_addr_t>(nodeCount, 0))
+        , mat(std::vector<std::vector<char>>(nodeCount, std::vector<char>(nodeCount, 0)))
+    {
+    }
+} TopoMat;
+
 /**
  * @brief 全局拓扑图单例（仅汇聚节点）
  */
@@ -200,8 +210,11 @@ private:
     size_t nodeCount;
     std::atomic<size_t> timeoutSec;
     std::mutex mtx4Gragh;
+    std::mutex mtx4LinkQueue;
+    std::mutex mtx4PosList;
     std::map<in_addr_t, std::set<in_addr_t>> graph; // 邻接表形式的拓扑图，key为节点IP，value为其相连的邻居节点序列
-    std::queue<LinkQueueItem> linkQueue;
+    std::queue<LinkQueueItem> linkQueue;    // 带时间戳的连接队列，超时的连接将被删除
+    std::map<in_addr_t, Position> posList;  // 各节点的位置列表，此表只增改，不删除（此表不设锁）
 
 private:
     TopoGraph();
@@ -234,17 +247,11 @@ public:
 
     void addLink(in_addr_t sIP, in_addr_t dIP);
 
-    bool toMatrix(size_t nodeCount, char* matrix[]);
+    // bool toMatrix(size_t nodeCount, char* matrix[]);
+    void toMatrix(std::vector<in_addr_t>& nodeList, std::vector<std::vector<char>>& mat);
+
+    void insertPos(in_addr_t nodeIP, double posX, double posY);
 };
-
-/// @brief 将节点信息及全局邻居表信息打包为邻居汇报报文（字符串）
-/// @param pktBuf 字符串缓冲区
-/// @return 打包后的字符串长度
-static size_t serializeNeighborPkt(char* pktBuf);
-
-/// @brief 将邻居汇报报文（字符串）解析到全局拓扑图中（仅汇聚节点）
-/// @param pktBuf 
-static void parseNeighborPkt(const char* pktBuf);
 
 /**
  * @brief 邻居汇报报文发送

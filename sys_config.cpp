@@ -131,4 +131,5 @@ void NodeConfig::printNodeConfig()
     cout << "myIP: " << myIP_s << "  [0x" << std::hex << myIP << "]\n";
     cout << "sinkNodeIP: " << sinkNodeIP_s << "  [0x" << std::hex << sinkNodeIP << "]\n";
     cout << "broadcastIP: " << broadcast_IP_s << "  [0x" << std::hex << broadcast_IP << "]\n";
+    cout << std::dec << endl;
 }

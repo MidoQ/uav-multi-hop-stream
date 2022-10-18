@@ -1,5 +1,14 @@
 #include "topo.h"
 
+/// @brief 将节点信息及全局邻居表信息打包为邻居汇报报文（字符串）
+/// @param pktBuf 字符串缓冲区
+/// @return 打包后的字符串长度
+static size_t serializeNeighborPkt(char* pktBuf);
+
+/// @brief 将邻居汇报报文（字符串）解析到全局拓扑图中（仅汇聚节点）
+/// @param pktBuf 
+static void parseNeighborPkt(const char* pktBuf);
+
 /* LivePacket */
 
 LivePacket::LivePacket()
@@ -154,6 +163,13 @@ void LiveBroadcast::pktListening()
         if (pkt.getIP() == myIP)
             continue;
         neibTable.addNeighbor(pkt.getIP(), pkt.getPositionX(), pkt.getPositionY());
+
+        // 汇聚节点收到邻居包时，需要同步处理拓扑图
+        if (config.getNodeType() == NodeType::sink) {
+            TopoGraph& topoGraph = TopoGraph::getInstance();
+            topoGraph.addLink(myIP, pkt.getIP());
+            topoGraph.insertPos(pkt.getIP(), pkt.getPositionX(), pkt.getPositionY());
+        }
     }
 }
 
@@ -284,6 +300,9 @@ TopoGraph::TopoGraph()
     nodeCount = 0;
     timeoutSec = 7;
     graph.clear();
+
+    std::thread timeout_thread(timeoutHandler);
+    timeout_thread.detach();
 }
 
 TopoGraph::~TopoGraph()
@@ -302,12 +321,19 @@ void TopoGraph::timeoutHandler()
         timeoutVal.tv_usec = 0;
         select(0, NULL, NULL, NULL, &timeoutVal); // 利用select进行延时
 
-        std_clock timeToCheck = std::chrono::steady_clock::now();
-        LinkQueueItem item = topoGraph.linkQueue.front();
-        std::chrono::duration<double, std::milli> diff = timeToCheck - item.timeStamp;
-        if (diff.count() > sec) {
-            topoGraph.removeLink(item.sIP, item.dIP);
+        std::unique_lock<std::mutex> lock(topoGraph.mtx4LinkQueue);
+        while (!topoGraph.linkQueue.empty()) {
+            std_clock timeToCheck = std::chrono::steady_clock::now();
+            LinkQueueItem item = topoGraph.linkQueue.front();
+            std::chrono::duration<double, std::milli> diff = timeToCheck - item.timeStamp;
+            if (diff.count() > sec * 1000) {
+                topoGraph.removeLink(item.sIP, item.dIP);
+                topoGraph.linkQueue.pop();
+            } else {
+                break;
+            }
         }
+        lock.unlock();
     }
 }
 
@@ -337,6 +363,7 @@ void TopoGraph::removeDirectLink(in_addr_t sIP, in_addr_t dIP)
             if (it->second.empty()) {
                 graph.erase(it);
                 nodeCount--;
+                // cout << "Link from " << sIP << " to " << dIP << " is removed!\n";
             }
         }
     }
@@ -353,18 +380,60 @@ void TopoGraph::removeLink(in_addr_t sIP, in_addr_t dIP)
 void TopoGraph::addLink(in_addr_t sIP, in_addr_t dIP)
 {
     std::unique_lock<std::mutex> lock(mtx4Gragh);
+
     addDirectLink(sIP, dIP);
     addDirectLink(dIP, sIP);
+
     std_clock stamp = std::chrono::steady_clock::now();
     LinkQueueItem item(sIP, dIP, stamp);
+    std::unique_lock<std::mutex> lock2(mtx4LinkQueue);
     linkQueue.push(item);
+    lock2.unlock();
+
     lock.unlock();
 }
 
-bool TopoGraph::toMatrix(size_t nodeCount, char* matrix[])
+/* bool TopoGraph::toMatrix(size_t nodeCount, char* matrix[])
 {
-    // TODO
     return false;
+} */
+
+void TopoGraph::toMatrix(std::vector<in_addr_t>& nodeList, std::vector<std::vector<char>>& mat)
+{
+    // TopoMat* topoMat = new TopoMat(nodeCount);
+    nodeList.resize(nodeCount);
+    mat.resize(nodeCount);
+    for (auto it = mat.begin(); it != mat.end(); it++) {
+        it->resize(nodeCount);
+    }
+
+    std::unordered_map<in_addr_t, size_t> mapIp2Index;
+
+    std::unique_lock<std::mutex> lock(mtx4Gragh);
+
+    size_t k = 0;
+    for (auto it = graph.begin(); it != graph.end(); it++) {
+        nodeList[k] = it->first;
+        mapIp2Index[it->first] = k;
+        k++;
+    }
+
+    size_t i, j;
+    for (auto it = graph.begin(); it != graph.end(); it++) {
+        i = mapIp2Index[it->first];
+        for (auto itForVal = it->second.begin(); itForVal != it->second.end(); itForVal++) {
+            j = mapIp2Index[*itForVal];
+            mat[i][j] = 1;
+        }
+    }
+
+    lock.unlock();
+    // return topoMat;
+}
+
+void TopoGraph::insertPos(in_addr_t nodeIP, double posX, double posY)
+{
+    posList[nodeIP] = Position(posX, posY);
 }
 
 size_t serializeNeighborPkt(char* pktBuf)
@@ -390,7 +459,26 @@ size_t serializeNeighborPkt(char* pktBuf)
 
 void parseNeighborPkt(const char* pktBuf)
 {
+    TopoGraph& topoGraph = TopoGraph::getInstance();
 
+    uint32_t* pNeibCount = (uint32_t*)pktBuf;
+    size_t neibCount = ntoh32(*pNeibCount);
+    pNeibCount++;
+    char* p = (char*) pNeibCount;
+
+    LivePacket srcInfo;
+    in_addr_t srcIP;
+    srcInfo.parseFromBuf(p);
+    p += 68;
+    srcIP = srcInfo.getIP();
+
+    for (size_t i = 0; i < neibCount; i++) {
+        LivePacket neibInfo;
+        neibInfo.parseFromBuf(p);
+        p += 68;
+        topoGraph.addLink(srcIP, neibInfo.getIP());
+        topoGraph.insertPos(neibInfo.getIP(), neibInfo.getPositionX(), neibInfo.getPositionY());
+    }
 }
 
 /* NeighborReporter */
