@@ -210,16 +210,6 @@ typedef struct UndiLinkWithTime {
     }
 } UndiLinkWithTime;
 
-typedef struct TopoMat {
-    std::vector<in_addr_t> nodeList;
-    std::vector<std::vector<char>> mat; // 避免使用vector<bool>
-    TopoMat(size_t nodeCount)
-        : nodeList(std::vector<in_addr_t>(nodeCount, 0))
-        , mat(std::vector<std::vector<char>>(nodeCount, std::vector<char>(nodeCount, 0)))
-    {
-    }
-} TopoMat;
-
 /**
  * @brief 全局拓扑图单例（仅汇聚节点）
  */
@@ -234,8 +224,6 @@ private:
     std::mutex mtx4TimeoutCount;
     std::mutex mtx4PosList;
     std::map<in_addr_t, std::set<in_addr_t>> graph; // 邻接表形式的拓扑图，key为节点IP，value为其相连的邻居节点序列
-    // std::queue<UndiLinkWithTime> linkQueue;    // 带时间戳的连接队列，超时的连接将被删除
-    // std::map<UndiLink, std::atomic<size_t>> timeoutCount; // 记录每个连接的超时次数
     std::set<UndiLinkWithTime> timeoutRecord;
     std::map<in_addr_t, Position> posList; // 各节点的位置列表，此表只增改，不删除（此表不设锁）
 
@@ -266,23 +254,22 @@ public:
         timeoutSec = _timeoutSec;
     }
 
+    /// @brief 添加一条sIP与dIP之间的双向连接
     void addLink(in_addr_t sIP, in_addr_t dIP);
 
+    /// @brief 移除一条sIP与dIP之间的双向连接
     void removeLink(in_addr_t sIP, in_addr_t dIP);
 
+    /// @brief 将拓扑图转换为邻接矩阵形式
+    /// @param nodeList 保存节点IP地址列表
+    /// @param mat 保存邻接矩阵，其行列表示的节点与nodeList中顺序一致
     void toMatrix(std::vector<in_addr_t>& nodeList, std::vector<std::vector<char>>& mat);
 
+    /// @brief 更新（或插入）节点nodeIP的位置坐标
     void updatePos(in_addr_t nodeIP, double posX, double posY);
 
+    /// @brief 更新（或插入）sIP与dIP之间连接的时间戳
     void updateTimeoutRecord(in_addr_t sIP, in_addr_t dIP);
-
-    void eraseTimeoutRecord(in_addr_t sIP, in_addr_t dIP);
-
-    void eraseTimeoutRecord(std::set<UndiLinkWithTime>::iterator& it);
-
-    // void incTimeoutCount(in_addr_t sIP, in_addr_t dIP);
-
-    // void resetTimeoutCount(in_addr_t sIP, in_addr_t dIP);
 };
 
 /**

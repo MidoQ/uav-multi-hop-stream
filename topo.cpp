@@ -1,7 +1,5 @@
 #include "topo.h"
 
-size_t nodeNum = 0;
-
 /// @brief 将节点信息及全局邻居表信息打包为邻居汇报报文（字符串）
 /// @param pktBuf 字符串缓冲区
 /// @return 打包后的字符串长度
@@ -165,14 +163,6 @@ void LiveBroadcast::pktListening()
         if (pkt.getIP() == myIP)
             continue;
         neibTable.addNeighbor(pkt.getIP(), pkt.getPositionX(), pkt.getPositionY());
-
-        // 汇聚节点收到存活广播包时，需要同步处理拓扑图
-        // if (config.getNodeType() == NodeType::sink) {
-        //     TopoGraph& topoGraph = TopoGraph::getInstance();
-        //     topoGraph.addLink(myIP, pkt.getIP());
-        //     topoGraph.resetTimeoutCount(myIP, pkt.getIP());
-        //     topoGraph.updatePos(pkt.getIP(), pkt.getPositionX(), pkt.getPositionY());
-        // }
     }
 }
 
@@ -196,19 +186,6 @@ NeighborTable::NeighborTable()
 
             size_t clearIndex = insertIndex == 0 ? 1 : 0;
             std::unique_lock<std::mutex> lock(mtx4ClearMap);
-            // if (config.getNodeType() == NodeType::sink) {
-            //     in_addr_t myIP = config.getMyIP();
-            //     for (auto it = neighbors[clearIndex].begin(); it != neighbors[clearIndex].end(); it++) {
-            //         if (neighbors[insertIndex].find(it->first) == neighbors[insertIndex].end()) {
-            //             topoGraph.incTimeoutCount(myIP, it->first);
-            //             UndiLink link(myIP, it->first);
-            //             if (topoGraph.timeoutCount[link] >= 2) {
-            //                 topoGraph.removeLink(myIP, it->first);
-            //                 topoGraph.resetTimeoutCount(myIP, it->first);
-            //             }
-            //         }
-            //     }
-            // }
             neighbors[clearIndex].clear();
             lock.unlock();
 
@@ -340,30 +317,12 @@ void TopoGraph::timeoutHandler()
         timeoutVal.tv_usec = 0;
         select(0, NULL, NULL, NULL, &timeoutVal); // 利用select进行延时
 
-        // std::unique_lock<std::mutex> lock(topoGraph.mtx4LinkQueue);
-        // while (!topoGraph.linkQueue.empty()) {
-        //     std_clock timeToCheck = std::chrono::steady_clock::now();
-        //     UndiLinkWithTime item = topoGraph.linkQueue.front();
-        //     std::chrono::duration<double, std::milli> diff = timeToCheck - item.timeStamp;
-        //     if (diff.count() > sec * 1000) {
-        //         topoGraph.incTimeoutCount(item.sIP, item.dIP);
-        //         topoGraph.linkQueue.pop();
-        //         UndiLink link(item.sIP, item.dIP);
-        //         if (topoGraph.timeoutCount[link] >= 2) {
-        //             topoGraph.removeLink(item.sIP, item.dIP);
-        //             topoGraph.resetTimeoutCount(item.sIP, item.dIP);
-        //         }
-        //     } else {
-        //         break;
-        //     }
-        // }
         std::unique_lock<std::mutex> lock(topoGraph.mtx4timeoutRec);
         std_clock timeToCheck = std::chrono::steady_clock::now();
         for (auto it = topoGraph.timeoutRecord.begin(); it != topoGraph.timeoutRecord.end();) {
             std::chrono::duration<double, std::milli> diff = timeToCheck - (*it).timeStamp;
             if (diff.count() > sec * 1000) {
                 topoGraph.removeLink((*it).sIP, (*it).dIP);
-                // topoGraph.eraseTimeoutRecord((*it).sIP, (*it).dIP);
                 it = topoGraph.timeoutRecord.erase(it);
             } else {
                 it++;
@@ -415,40 +374,14 @@ void TopoGraph::removeLink(in_addr_t sIP, in_addr_t dIP)
     lock.unlock();
 }
 
-// void TopoGraph::incTimeoutCount(in_addr_t sIP, in_addr_t dIP)
-// {
-//     UndiLink link(sIP, dIP);
-//     if (timeoutCount.find(link) != timeoutCount.end()) {
-//         timeoutCount[link] += 1;
-//     } else {
-//         timeoutCount[link] = 1;
-//     }
-// }
-
-// void TopoGraph::resetTimeoutCount(in_addr_t sIP, in_addr_t dIP)
-// {
-//     UndiLink link(sIP, dIP);
-//     timeoutCount[link] = 0;
-// }
-
 void TopoGraph::addLink(in_addr_t sIP, in_addr_t dIP)
 {
     std::unique_lock<std::mutex> lock(mtx4Gragh);
 
-    // debug
-    int wrong = 0;
-    if ((sIP == 0x6602A8C0 && dIP == 0x6502A8C0)
-     || (dIP == 0x6602A8C0 && sIP == 0x6502A8C0)) {
-        wrong = 1;
-    }
-
     addDirectLink(sIP, dIP);
     addDirectLink(dIP, sIP);
 
-    // std_clock stamp = std::chrono::steady_clock::now();
-    // UndiLinkWithTime item(sIP, dIP, stamp);
     std::unique_lock<std::mutex> lock2(mtx4timeoutRec);
-    // linkQueue.push(item);
     updateTimeoutRecord(sIP, dIP);
     lock2.unlock();
 
@@ -457,16 +390,6 @@ void TopoGraph::addLink(in_addr_t sIP, in_addr_t dIP)
 
 void TopoGraph::toMatrix(std::vector<in_addr_t>& nodeList, std::vector<std::vector<char>>& mat)
 {
-    // TopoMat* topoMat = new TopoMat(nodeCount);
-
-    nodeNum = nodeCount;    // debug
-
-    // nodeList.resize(nodeCount);
-    // mat.resize(nodeCount, 0);
-    // for (auto it = mat.begin(); it != mat.end(); it++) {
-    //     it->resize(nodeCount, 0);
-    // }
-
     nodeList.assign(nodeCount, 0);
     mat.assign(nodeCount, std::vector<char>(nodeCount, 0));
 
@@ -491,7 +414,6 @@ void TopoGraph::toMatrix(std::vector<in_addr_t>& nodeList, std::vector<std::vect
     }
 
     lock.unlock();
-    // return topoMat;
 }
 
 void TopoGraph::updatePos(in_addr_t nodeIP, double posX, double posY)
@@ -501,12 +423,13 @@ void TopoGraph::updatePos(in_addr_t nodeIP, double posX, double posY)
 
 void TopoGraph::updateTimeoutRecord(in_addr_t sIP, in_addr_t dIP)
 {
+    // TODO：可优化。时间戳可简化为一个浮点数，在更新时原地修改。
+    // 在程序启动时，在config中记录一个初始time_point，之后所有的时间戳与其作差记录为浮点数，单位一致即可。
     bool isExist = false;
     std_clock timeNow = std::chrono::steady_clock::now();
     for (auto it = timeoutRecord.begin(); it != timeoutRecord.end();) {
         if ((sIP == (*it).sIP && dIP == (*it).dIP) || (sIP == (*it).dIP && dIP == (*it).sIP)) {
             isExist = true;
-            // eraseTimeoutRecord((*it).sIP, (*it).dIP);
             it = timeoutRecord.erase(it);
             UndiLinkWithTime link(sIP, dIP, timeNow);
             timeoutRecord.insert(link);
@@ -520,22 +443,6 @@ void TopoGraph::updateTimeoutRecord(in_addr_t sIP, in_addr_t dIP)
         UndiLinkWithTime link(sIP, dIP, timeNow);
         timeoutRecord.insert(link);
     }
-}
-
-void TopoGraph::eraseTimeoutRecord(in_addr_t sIP, in_addr_t dIP)
-{
-    for (auto it = timeoutRecord.begin(); it != timeoutRecord.end();) {
-        if ((sIP == (*it).sIP && dIP == (*it).dIP) || (sIP == (*it).dIP && dIP == (*it).sIP)) {
-            it = timeoutRecord.erase(it);
-        } else {
-            it++;
-        }
-    }
-}
-
-void TopoGraph::eraseTimeoutRecord(std::set<UndiLinkWithTime>::iterator& it)
-{
-    it = timeoutRecord.erase(it);
 }
 
 size_t serializeNeighborPkt(char* pktBuf)
@@ -592,7 +499,7 @@ NeighborReporter::NeighborReporter()
 
 NeighborReporter::~NeighborReporter()
 {
-    
+
 }
 
 void NeighborReporter::neighborReport()
