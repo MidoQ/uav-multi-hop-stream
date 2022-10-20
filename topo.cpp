@@ -1,5 +1,7 @@
 #include "topo.h"
 
+size_t nodeNum = 0;
+
 /// @brief 将节点信息及全局邻居表信息打包为邻居汇报报文（字符串）
 /// @param pktBuf 字符串缓冲区
 /// @return 打包后的字符串长度
@@ -64,7 +66,7 @@ LiveBroadcast::LiveBroadcast()
 {
     isBroadcasting = false;
     isListening = false;
-    intervalSec = 5;
+    intervalSec = DEFAULT_LIVE_BRD_SEC;
 }
 
 LiveBroadcast::~LiveBroadcast()
@@ -164,12 +166,13 @@ void LiveBroadcast::pktListening()
             continue;
         neibTable.addNeighbor(pkt.getIP(), pkt.getPositionX(), pkt.getPositionY());
 
-        // 汇聚节点收到邻居包时，需要同步处理拓扑图
-        if (config.getNodeType() == NodeType::sink) {
-            TopoGraph& topoGraph = TopoGraph::getInstance();
-            topoGraph.addLink(myIP, pkt.getIP());
-            topoGraph.insertPos(pkt.getIP(), pkt.getPositionX(), pkt.getPositionY());
-        }
+        // 汇聚节点收到存活广播包时，需要同步处理拓扑图
+        // if (config.getNodeType() == NodeType::sink) {
+        //     TopoGraph& topoGraph = TopoGraph::getInstance();
+        //     topoGraph.addLink(myIP, pkt.getIP());
+        //     topoGraph.resetTimeoutCount(myIP, pkt.getIP());
+        //     topoGraph.updatePos(pkt.getIP(), pkt.getPositionX(), pkt.getPositionY());
+        // }
     }
 }
 
@@ -177,7 +180,7 @@ void LiveBroadcast::pktListening()
 
 NeighborTable::NeighborTable()
 {
-    timeoutSec = 6;
+    timeoutSec = DEFAULT_LIVE_TIMEOUT_SEC;
     insertIndex = 0;
 
     neighbors[0].clear();
@@ -188,8 +191,24 @@ NeighborTable::NeighborTable()
         while(1) {
             sleep_for(seconds(timeoutSec));
 
+            NodeConfig& config = NodeConfig::getInstance();
+            TopoGraph& topoGraph = TopoGraph::getInstance();
+
             size_t clearIndex = insertIndex == 0 ? 1 : 0;
             std::unique_lock<std::mutex> lock(mtx4ClearMap);
+            // if (config.getNodeType() == NodeType::sink) {
+            //     in_addr_t myIP = config.getMyIP();
+            //     for (auto it = neighbors[clearIndex].begin(); it != neighbors[clearIndex].end(); it++) {
+            //         if (neighbors[insertIndex].find(it->first) == neighbors[insertIndex].end()) {
+            //             topoGraph.incTimeoutCount(myIP, it->first);
+            //             UndiLink link(myIP, it->first);
+            //             if (topoGraph.timeoutCount[link] >= 2) {
+            //                 topoGraph.removeLink(myIP, it->first);
+            //                 topoGraph.resetTimeoutCount(myIP, it->first);
+            //             }
+            //         }
+            //     }
+            // }
             neighbors[clearIndex].clear();
             lock.unlock();
 
@@ -298,7 +317,7 @@ size_t NeighborTable::neighbors2Buf(char* buf)
 TopoGraph::TopoGraph()
 {
     nodeCount = 0;
-    timeoutSec = 7;
+    timeoutSec = DEFAULT_NEIB_TIMOUT_SEC;
     graph.clear();
 
     std::thread timeout_thread(timeoutHandler);
@@ -321,18 +340,37 @@ void TopoGraph::timeoutHandler()
         timeoutVal.tv_usec = 0;
         select(0, NULL, NULL, NULL, &timeoutVal); // 利用select进行延时
 
-        std::unique_lock<std::mutex> lock(topoGraph.mtx4LinkQueue);
-        while (!topoGraph.linkQueue.empty()) {
-            std_clock timeToCheck = std::chrono::steady_clock::now();
-            LinkQueueItem item = topoGraph.linkQueue.front();
-            std::chrono::duration<double, std::milli> diff = timeToCheck - item.timeStamp;
+        // std::unique_lock<std::mutex> lock(topoGraph.mtx4LinkQueue);
+        // while (!topoGraph.linkQueue.empty()) {
+        //     std_clock timeToCheck = std::chrono::steady_clock::now();
+        //     UndiLinkWithTime item = topoGraph.linkQueue.front();
+        //     std::chrono::duration<double, std::milli> diff = timeToCheck - item.timeStamp;
+        //     if (diff.count() > sec * 1000) {
+        //         topoGraph.incTimeoutCount(item.sIP, item.dIP);
+        //         topoGraph.linkQueue.pop();
+        //         UndiLink link(item.sIP, item.dIP);
+        //         if (topoGraph.timeoutCount[link] >= 2) {
+        //             topoGraph.removeLink(item.sIP, item.dIP);
+        //             topoGraph.resetTimeoutCount(item.sIP, item.dIP);
+        //         }
+        //     } else {
+        //         break;
+        //     }
+        // }
+        std::unique_lock<std::mutex> lock(topoGraph.mtx4timeoutRec);
+        std_clock timeToCheck = std::chrono::steady_clock::now();
+        for (auto it = topoGraph.timeoutRecord.begin(); it != topoGraph.timeoutRecord.end();) {
+            std::chrono::duration<double, std::milli> diff = timeToCheck - (*it).timeStamp;
             if (diff.count() > sec * 1000) {
-                topoGraph.removeLink(item.sIP, item.dIP);
-                topoGraph.linkQueue.pop();
+                topoGraph.removeLink((*it).sIP, (*it).dIP);
+                // topoGraph.eraseTimeoutRecord((*it).sIP, (*it).dIP);
+                it = topoGraph.timeoutRecord.erase(it);
             } else {
-                break;
+                it++;
+                // break;
             }
         }
+
         lock.unlock();
     }
 }
@@ -377,35 +415,60 @@ void TopoGraph::removeLink(in_addr_t sIP, in_addr_t dIP)
     lock.unlock();
 }
 
+// void TopoGraph::incTimeoutCount(in_addr_t sIP, in_addr_t dIP)
+// {
+//     UndiLink link(sIP, dIP);
+//     if (timeoutCount.find(link) != timeoutCount.end()) {
+//         timeoutCount[link] += 1;
+//     } else {
+//         timeoutCount[link] = 1;
+//     }
+// }
+
+// void TopoGraph::resetTimeoutCount(in_addr_t sIP, in_addr_t dIP)
+// {
+//     UndiLink link(sIP, dIP);
+//     timeoutCount[link] = 0;
+// }
+
 void TopoGraph::addLink(in_addr_t sIP, in_addr_t dIP)
 {
     std::unique_lock<std::mutex> lock(mtx4Gragh);
 
+    // debug
+    int wrong = 0;
+    if ((sIP == 0x6602A8C0 && dIP == 0x6502A8C0)
+     || (dIP == 0x6602A8C0 && sIP == 0x6502A8C0)) {
+        wrong = 1;
+    }
+
     addDirectLink(sIP, dIP);
     addDirectLink(dIP, sIP);
 
-    std_clock stamp = std::chrono::steady_clock::now();
-    LinkQueueItem item(sIP, dIP, stamp);
-    std::unique_lock<std::mutex> lock2(mtx4LinkQueue);
-    linkQueue.push(item);
+    // std_clock stamp = std::chrono::steady_clock::now();
+    // UndiLinkWithTime item(sIP, dIP, stamp);
+    std::unique_lock<std::mutex> lock2(mtx4timeoutRec);
+    // linkQueue.push(item);
+    updateTimeoutRecord(sIP, dIP);
     lock2.unlock();
 
     lock.unlock();
 }
 
-/* bool TopoGraph::toMatrix(size_t nodeCount, char* matrix[])
-{
-    return false;
-} */
-
 void TopoGraph::toMatrix(std::vector<in_addr_t>& nodeList, std::vector<std::vector<char>>& mat)
 {
     // TopoMat* topoMat = new TopoMat(nodeCount);
-    nodeList.resize(nodeCount);
-    mat.resize(nodeCount);
-    for (auto it = mat.begin(); it != mat.end(); it++) {
-        it->resize(nodeCount);
-    }
+
+    nodeNum = nodeCount;    // debug
+
+    // nodeList.resize(nodeCount);
+    // mat.resize(nodeCount, 0);
+    // for (auto it = mat.begin(); it != mat.end(); it++) {
+    //     it->resize(nodeCount, 0);
+    // }
+
+    nodeList.assign(nodeCount, 0);
+    mat.assign(nodeCount, std::vector<char>(nodeCount, 0));
 
     std::unordered_map<in_addr_t, size_t> mapIp2Index;
 
@@ -431,9 +494,48 @@ void TopoGraph::toMatrix(std::vector<in_addr_t>& nodeList, std::vector<std::vect
     // return topoMat;
 }
 
-void TopoGraph::insertPos(in_addr_t nodeIP, double posX, double posY)
+void TopoGraph::updatePos(in_addr_t nodeIP, double posX, double posY)
 {
     posList[nodeIP] = Position(posX, posY);
+}
+
+void TopoGraph::updateTimeoutRecord(in_addr_t sIP, in_addr_t dIP)
+{
+    bool isExist = false;
+    std_clock timeNow = std::chrono::steady_clock::now();
+    for (auto it = timeoutRecord.begin(); it != timeoutRecord.end();) {
+        if ((sIP == (*it).sIP && dIP == (*it).dIP) || (sIP == (*it).dIP && dIP == (*it).sIP)) {
+            isExist = true;
+            // eraseTimeoutRecord((*it).sIP, (*it).dIP);
+            it = timeoutRecord.erase(it);
+            UndiLinkWithTime link(sIP, dIP, timeNow);
+            timeoutRecord.insert(link);
+            break;
+        } else {
+            it++;
+        }
+    }
+
+    if (!isExist) {
+        UndiLinkWithTime link(sIP, dIP, timeNow);
+        timeoutRecord.insert(link);
+    }
+}
+
+void TopoGraph::eraseTimeoutRecord(in_addr_t sIP, in_addr_t dIP)
+{
+    for (auto it = timeoutRecord.begin(); it != timeoutRecord.end();) {
+        if ((sIP == (*it).sIP && dIP == (*it).dIP) || (sIP == (*it).dIP && dIP == (*it).sIP)) {
+            it = timeoutRecord.erase(it);
+        } else {
+            it++;
+        }
+    }
+}
+
+void TopoGraph::eraseTimeoutRecord(std::set<UndiLinkWithTime>::iterator& it)
+{
+    it = timeoutRecord.erase(it);
 }
 
 size_t serializeNeighborPkt(char* pktBuf)
@@ -477,7 +579,7 @@ void parseNeighborPkt(const char* pktBuf)
         neibInfo.parseFromBuf(p);
         p += 68;
         topoGraph.addLink(srcIP, neibInfo.getIP());
-        topoGraph.insertPos(neibInfo.getIP(), neibInfo.getPositionX(), neibInfo.getPositionY());
+        topoGraph.updatePos(neibInfo.getIP(), neibInfo.getPositionX(), neibInfo.getPositionY());
     }
 }
 
@@ -485,7 +587,7 @@ void parseNeighborPkt(const char* pktBuf)
 
 NeighborReporter::NeighborReporter()
 {
-    intervalSec = 5;
+    intervalSec = DEFAULT_NEIB_REPORT_SEC;
 }
 
 NeighborReporter::~NeighborReporter()
@@ -510,21 +612,25 @@ void NeighborReporter::neighborReport()
         sleep_for(seconds(reporter.intervalSec));
 
         // 获取下一跳IP
-        try {
-            if (routeFail) {
-                nextHopIP = routeGetter.getNextHop(sinkNodeIP, 3, SEND_REQ_ANYWAY);
-            } else {
-                nextHopIP = routeGetter.getNextHop(sinkNodeIP, 3);
+        if (config.getNodeType() == NodeType::sink) {
+            nextHopIP = config.getMyIP();
+        } else {
+            try {
+                if (routeFail) {
+                    nextHopIP = routeGetter.getNextHop(sinkNodeIP, 3, SEND_REQ_ANYWAY);
+                } else {
+                    nextHopIP = routeGetter.getNextHop(sinkNodeIP, 3);
+                }
+                routeFail = false;
+            } catch (const char* msg) {
+                routeFail = true;
+                cerr << __func__ << " : Fail to get next hop!\n";
+                cerr << msg << endl;
+                if (strcmp(msg, "DestinationUnreachable") == 0) {
+                    cerr << "No route to sink node!\n";
+                }
+                continue;
             }
-            routeFail = false;
-        } catch (const char* msg) {
-            routeFail = true;
-            cerr << __func__ << " : Fail to get next hop!\n";
-            cerr << msg << endl;
-            if (strcmp(msg, "DestinationUnreachable") == 0) {
-                cerr << "No route to sink node!\n";
-            }
-            continue;
         }
 
         // 与下一跳节点连接
@@ -684,9 +790,9 @@ void NeighborListener::neighborListen()
 
     while (1) {
         clnt_addr_size = sizeof(clnt_addr);
-        cout << __func__ << ": Listening for neighbor packet...\n";
+        // cout << __func__ << ": Listening for neighbor packet...\n";
         clnt_sock = accept(listener.listen_sock, (struct sockaddr*)&clnt_addr, &clnt_addr_size);
-        cout << __func__ << ": New client connected!\n";
+        // cout << __func__ << ": New client connected!\n";
 
         std::thread clnt_thread(NeighborListener::clntHandler, clnt_sock);
         clnt_thread.detach();
@@ -727,7 +833,7 @@ void NeighborListener::clntHandler(int clnt_sock)
         }
         totalLen += recvLen;
 
-        #ifdef TOPO_TEST
+        #ifdef DEBUG_PRINT_NEIB_PKT
         printNeighborPkt(recvBuf);
         #endif
 

@@ -23,6 +23,7 @@ else()
 endif()
 
 add_definitions(-DTOPO_TEST)
+# add_definitions(-DDEBUG_PRINT_NEIB_PKT)
 
 set(MODULE_CXXFILE
    utils.cpp sys_config.cpp

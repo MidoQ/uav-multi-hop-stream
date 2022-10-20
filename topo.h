@@ -26,6 +26,10 @@
 #define LIVE_PKT_MAX_LEN 100
 #define NEIB_PKT_MAX_LEN 800
 #define NEIB_PKT_HEADER_LEN 72
+#define DEFAULT_LIVE_BRD_SEC 3
+#define DEFAULT_LIVE_TIMEOUT_SEC 5
+#define DEFAULT_NEIB_REPORT_SEC 5
+#define DEFAULT_NEIB_TIMOUT_SEC 7
 
 using std::cerr;
 using std::cout;
@@ -175,22 +179,36 @@ public:
 };
 
 /**
- * @brief 拓扑图边的队列表项
- * @details 表示一条双向边插入图的时间
+ * @brief 表示一条无向（双向）的连接
  */
-typedef std::chrono::_V2::steady_clock::time_point std_clock;
-typedef struct LinkQueueItem {
+typedef struct UndiLink {
+    in_addr_t sIP;
+    in_addr_t dIP;
+    UndiLink(in_addr_t _sIP, in_addr_t _dIP) : sIP(_sIP), dIP(_dIP) {}
+    bool operator<(const UndiLink& A) const {
+        return sIP == A.sIP ? dIP < A.dIP : sIP < A.sIP;
+    }
+} UndiLink;
+
+/**
+ * @brief 表示一条带时间戳的无向（双向）的连接
+ */
+typedef std::chrono::time_point<std::chrono::steady_clock> std_clock;
+typedef struct UndiLinkWithTime {
     in_addr_t sIP;
     in_addr_t dIP;
     std_clock timeStamp;
-    LinkQueueItem(in_addr_t _sIP, in_addr_t _dIP, std_clock _timeStamp)
+    UndiLinkWithTime(in_addr_t _sIP, in_addr_t _dIP, std_clock _timeStamp)
         : sIP(_sIP)
         , dIP(_dIP)
         , timeStamp(_timeStamp)
     {
     }
-    LinkQueueItem() = delete;
-} LinkQueueItem;
+    UndiLinkWithTime() = delete;
+    bool operator<(const UndiLinkWithTime& A) const {
+        return timeStamp < A.timeStamp;
+    }
+} UndiLinkWithTime;
 
 typedef struct TopoMat {
     std::vector<in_addr_t> nodeList;
@@ -206,15 +224,20 @@ typedef struct TopoMat {
  * @brief 全局拓扑图单例（仅汇聚节点）
  */
 class TopoGraph {
+    friend class NeighborTable;
+
 private:
     size_t nodeCount;
     std::atomic<size_t> timeoutSec;
     std::mutex mtx4Gragh;
-    std::mutex mtx4LinkQueue;
+    std::mutex mtx4timeoutRec;
+    std::mutex mtx4TimeoutCount;
     std::mutex mtx4PosList;
     std::map<in_addr_t, std::set<in_addr_t>> graph; // 邻接表形式的拓扑图，key为节点IP，value为其相连的邻居节点序列
-    std::queue<LinkQueueItem> linkQueue;    // 带时间戳的连接队列，超时的连接将被删除
-    std::map<in_addr_t, Position> posList;  // 各节点的位置列表，此表只增改，不删除（此表不设锁）
+    // std::queue<UndiLinkWithTime> linkQueue;    // 带时间戳的连接队列，超时的连接将被删除
+    // std::map<UndiLink, std::atomic<size_t>> timeoutCount; // 记录每个连接的超时次数
+    std::set<UndiLinkWithTime> timeoutRecord;
+    std::map<in_addr_t, Position> posList; // 各节点的位置列表，此表只增改，不删除（此表不设锁）
 
 private:
     TopoGraph();
@@ -226,8 +249,6 @@ private:
     void addDirectLink(in_addr_t sIP, in_addr_t dIP);
 
     void removeDirectLink(in_addr_t sIP, in_addr_t dIP);
-
-    void removeLink(in_addr_t sIP, in_addr_t dIP);
 
 public:
     ~TopoGraph();
@@ -247,10 +268,21 @@ public:
 
     void addLink(in_addr_t sIP, in_addr_t dIP);
 
-    // bool toMatrix(size_t nodeCount, char* matrix[]);
+    void removeLink(in_addr_t sIP, in_addr_t dIP);
+
     void toMatrix(std::vector<in_addr_t>& nodeList, std::vector<std::vector<char>>& mat);
 
-    void insertPos(in_addr_t nodeIP, double posX, double posY);
+    void updatePos(in_addr_t nodeIP, double posX, double posY);
+
+    void updateTimeoutRecord(in_addr_t sIP, in_addr_t dIP);
+
+    void eraseTimeoutRecord(in_addr_t sIP, in_addr_t dIP);
+
+    void eraseTimeoutRecord(std::set<UndiLinkWithTime>::iterator& it);
+
+    // void incTimeoutCount(in_addr_t sIP, in_addr_t dIP);
+
+    // void resetTimeoutCount(in_addr_t sIP, in_addr_t dIP);
 };
 
 /**

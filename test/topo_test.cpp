@@ -39,11 +39,12 @@ int main(int argc, char** argv)
     NeighborReporter& neibReporter = NeighborReporter::getInstance();
 
     auto printNeibMatrix = [&]() {
-        std::vector<in_addr_t> nodeList;
-        std::vector<std::vector<char>> mat;
+        
         while (1) {
             sleep_for(seconds(5));
 
+            std::vector<in_addr_t> nodeList;
+            std::vector<std::vector<char>> mat;
             topo.toMatrix(nodeList, mat);
 
             for (size_t i = 0; i < nodeList.size(); ++i) {
@@ -69,16 +70,15 @@ int main(int argc, char** argv)
     std::thread route_listen_thread(routeListener.listenPacket);
     std::thread liveBrd_thread(liveBrd.pktBroadcasting);
     std::thread liveLis_thread(liveBrd.pktListening);
-    std::thread neibTablePrinter_thread(printNeibTable);
-
+    // std::thread neibTablePrinter_thread(printNeibTable);
     sleep_for(seconds(10));
 
     std::thread neib_listen_thread(neibListener.neighborListen);
-    if (nodeConfig.getNodeType() == NodeType::common) {
-        std::thread neib_report_thread(neibReporter.neighborReport);
-        neib_report_thread.join();
-    }
-    else {
+    sleep_for(seconds(3));
+
+    std::thread neib_report_thread(neibReporter.neighborReport);
+
+    if (nodeConfig.getNodeType() == NodeType::sink) {
         std::thread matPrinter_thread(printNeibMatrix);
         matPrinter_thread.join();
     }
@@ -87,7 +87,8 @@ int main(int argc, char** argv)
     liveBrd_thread.join();
     liveLis_thread.join();
     neib_listen_thread.join();
-    neibTablePrinter_thread.join();
+    neib_report_thread.join();
+    // neibTablePrinter_thread.join();
 
     return 0;
 }
