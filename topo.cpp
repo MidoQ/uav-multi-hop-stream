@@ -147,6 +147,7 @@ void LiveBroadcast::pktListening()
 
     if (bind(instance.recv_sock, (struct sockaddr*)&recv_addr, sizeof(recv_addr)) == -1) {
         cout << '[' << __func__ << "]: bind error!\n";
+        return;
     }
 
     NodeConfig& config = NodeConfig::getInstance();
@@ -366,14 +367,6 @@ void TopoGraph::removeDirectLink(in_addr_t sIP, in_addr_t dIP)
     }
 }
 
-void TopoGraph::removeLink(in_addr_t sIP, in_addr_t dIP)
-{
-    std::unique_lock<std::mutex> lock(mtx4Gragh);
-    removeDirectLink(sIP, dIP);
-    removeDirectLink(dIP, sIP);
-    lock.unlock();
-}
-
 void TopoGraph::addLink(in_addr_t sIP, in_addr_t dIP)
 {
     std::unique_lock<std::mutex> lock(mtx4Gragh);
@@ -386,6 +379,43 @@ void TopoGraph::addLink(in_addr_t sIP, in_addr_t dIP)
     lock2.unlock();
 
     lock.unlock();
+}
+
+void TopoGraph::removeLink(in_addr_t sIP, in_addr_t dIP)
+{
+    std::unique_lock<std::mutex> lock(mtx4Gragh);
+    removeDirectLink(sIP, dIP);
+    removeDirectLink(dIP, sIP);
+    lock.unlock();
+}
+
+void TopoGraph::updateTimeoutRecord(in_addr_t sIP, in_addr_t dIP)
+{
+    // TODO：可优化。时间戳可简化为一个浮点数，在更新时原地修改。
+    // 在程序启动时，在config中记录一个初始time_point，之后所有的时间戳与其作差记录为浮点数，单位一致即可。
+    bool isExist = false;
+    std_clock timeNow = std::chrono::steady_clock::now();
+    for (auto it = timeoutRecord.begin(); it != timeoutRecord.end();) {
+        if ((sIP == (*it).sIP && dIP == (*it).dIP) || (sIP == (*it).dIP && dIP == (*it).sIP)) {
+            isExist = true;
+            it = timeoutRecord.erase(it);
+            UndiLinkWithTime link(sIP, dIP, timeNow);
+            timeoutRecord.insert(link);
+            break;
+        } else {
+            it++;
+        }
+    }
+
+    if (!isExist) {
+        UndiLinkWithTime link(sIP, dIP, timeNow);
+        timeoutRecord.insert(link);
+    }
+}
+
+void TopoGraph::updatePos(in_addr_t nodeIP, double posX, double posY)
+{
+    posList[nodeIP] = Position(posX, posY);
 }
 
 void TopoGraph::toMatrix(std::vector<in_addr_t>& nodeList, std::vector<std::vector<char>>& mat)
@@ -416,33 +446,14 @@ void TopoGraph::toMatrix(std::vector<in_addr_t>& nodeList, std::vector<std::vect
     lock.unlock();
 }
 
-void TopoGraph::updatePos(in_addr_t nodeIP, double posX, double posY)
+Position TopoGraph::getNodePos(in_addr_t nodeIP)
 {
-    posList[nodeIP] = Position(posX, posY);
-}
-
-void TopoGraph::updateTimeoutRecord(in_addr_t sIP, in_addr_t dIP)
-{
-    // TODO：可优化。时间戳可简化为一个浮点数，在更新时原地修改。
-    // 在程序启动时，在config中记录一个初始time_point，之后所有的时间戳与其作差记录为浮点数，单位一致即可。
-    bool isExist = false;
-    std_clock timeNow = std::chrono::steady_clock::now();
-    for (auto it = timeoutRecord.begin(); it != timeoutRecord.end();) {
-        if ((sIP == (*it).sIP && dIP == (*it).dIP) || (sIP == (*it).dIP && dIP == (*it).sIP)) {
-            isExist = true;
-            it = timeoutRecord.erase(it);
-            UndiLinkWithTime link(sIP, dIP, timeNow);
-            timeoutRecord.insert(link);
-            break;
-        } else {
-            it++;
-        }
+    Position res;
+    auto it = posList.find(nodeIP);
+    if (it != posList.end()) {
+        res = it->second;
     }
-
-    if (!isExist) {
-        UndiLinkWithTime link(sIP, dIP, timeNow);
-        timeoutRecord.insert(link);
-    }
+    return res;
 }
 
 size_t serializeNeighborPkt(char* pktBuf)

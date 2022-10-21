@@ -260,16 +260,21 @@ public:
     /// @brief 移除一条sIP与dIP之间的双向连接
     void removeLink(in_addr_t sIP, in_addr_t dIP);
 
+    /// @brief 更新（或插入）sIP与dIP之间连接的时间戳
+    void updateTimeoutRecord(in_addr_t sIP, in_addr_t dIP);
+
+    /// @brief 更新（或插入）节点nodeIP的位置坐标
+    void updatePos(in_addr_t nodeIP, double posX, double posY);
+
     /// @brief 将拓扑图转换为邻接矩阵形式
     /// @param nodeList 保存节点IP地址列表
     /// @param mat 保存邻接矩阵，其行列表示的节点与nodeList中顺序一致
     void toMatrix(std::vector<in_addr_t>& nodeList, std::vector<std::vector<char>>& mat);
 
-    /// @brief 更新（或插入）节点nodeIP的位置坐标
-    void updatePos(in_addr_t nodeIP, double posX, double posY);
-
-    /// @brief 更新（或插入）sIP与dIP之间连接的时间戳
-    void updateTimeoutRecord(in_addr_t sIP, in_addr_t dIP);
+    /// @brief 获取某节点的坐标
+    /// @param nodeIP 节点IP地址
+    /// @return 若节点存在，返回其坐标；若不存在，返回全0坐标
+    Position getNodePos(in_addr_t nodeIP);
 };
 
 /**

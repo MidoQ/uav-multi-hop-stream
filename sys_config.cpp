@@ -10,9 +10,11 @@ NodeConfig::NodeConfig()
     positionY = 100.0;
     myIP = 0;
     sinkNodeIP = 0;
+    controllerIP = 0;
     strcpy(myIP_s, "000.000.000.000");
     strcpy(sinkNodeIP_s, "000.000.000.000");
     strcpy(broadcast_IP_s, "192.168.2.255");
+    strcpy(controllerIP_s, "000.000.000.000");
 
     in_addr tmp;
     inet_pton(AF_INET, broadcast_IP_s, &tmp);
@@ -69,6 +71,9 @@ int NodeConfig::loadConfigFromFile(const char config_filename[])
     inet_pton(AF_INET, sinkNodeIP_s, &tmp);
     sinkNodeIP = tmp.s_addr;
 
+    inet_pton(AF_INET, controllerIP_s, &tmp);
+    controllerIP = tmp.s_addr;
+
     if (myIP == sinkNodeIP) {
         nodeType = NodeType::sink;
     } else {
@@ -85,6 +90,7 @@ void NodeConfig::initParamMap()
     paramMap["positionY"] = 1;
     paramMap["myIP_s"] = 2;
     paramMap["sinkNodeIP_s"] = 3;
+    paramMap["controllerIP_s"] = 4;
 }
 
 void NodeConfig::assignParam(std::string& paramName, std::string& paramVal)
@@ -111,6 +117,10 @@ void NodeConfig::assignParam(std::string& paramName, std::string& paramVal)
         memcpy(sinkNodeIP_s, paramVal.c_str(), paramVal.size());
         sinkNodeIP_s[paramVal.size()] = 0;
         break;
+    case 4:
+        memcpy(controllerIP_s, paramVal.c_str(), paramVal.size());
+        controllerIP_s[paramVal.size()] = 0;
+        break;
     default:
         break;
     }
@@ -131,5 +141,8 @@ void NodeConfig::printNodeConfig()
     cout << "myIP: " << myIP_s << "  [0x" << std::hex << myIP << "]\n";
     cout << "sinkNodeIP: " << sinkNodeIP_s << "  [0x" << std::hex << sinkNodeIP << "]\n";
     cout << "broadcastIP: " << broadcast_IP_s << "  [0x" << std::hex << broadcast_IP << "]\n";
+    if (nodeType == NodeType::sink) {
+        cout << "controllerIP: " << controllerIP_s << "  [0x" << std::hex << controllerIP << "]\n";
+    }
     cout << std::dec << endl;
 }
