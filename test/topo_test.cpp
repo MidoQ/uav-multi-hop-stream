@@ -2,6 +2,7 @@
 #include "../utils.h"
 #include "../sys_config.h"
 #include "../topo.h"
+#include "../sdn_cmd.h"
 #include <iostream>
 #include <string>
 #include <random>
@@ -37,6 +38,8 @@ int main(int argc, char** argv)
     LiveBroadcast& liveBrd = LiveBroadcast::getInstance();
     NeighborListener& neibListener = NeighborListener::getInstance();
     NeighborReporter& neibReporter = NeighborReporter::getInstance();
+    SdnReporter& sdnReporter = SdnReporter::getInstance();
+    SdnListener& sdnListener = SdnListener::getInstance();
 
     auto printNeibMatrix = [&]() {
         
@@ -79,6 +82,8 @@ int main(int argc, char** argv)
     std::thread neib_report_thread(neibReporter.neighborReport);
 
     if (nodeConfig.getNodeType() == NodeType::sink) {
+        sdnReporter.startReport();
+        sdnListener.startListen();
         std::thread matPrinter_thread(printNeibMatrix);
         matPrinter_thread.join();
     }

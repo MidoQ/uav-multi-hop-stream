@@ -96,6 +96,7 @@ void SdnReporter::SdnReportHandler()
         reporter.setPosListFromTopo();
         sendLen = reporter.serializeTopo(sendBuf);
         sendto(send_sock, sendBuf, sendLen, 0, (struct sockaddr*)&send_addr, sizeof(send_addr));
+        cout << "Topo uploaded!\n";
     }
 }
 
@@ -158,6 +159,7 @@ void SdnListener::SdnListenHandler()
 {
     int recv_sock;
     int recvLen;
+    socklen_t recv_sock_len;
     in_addr_t targetNodeIP;
     struct sockaddr_in recv_addr;
     SdnCmdType cmdType;
@@ -167,7 +169,7 @@ void SdnListener::SdnListenHandler()
     memset(recvBuf, 0, SDN_CMD_MAX_LEN);
 
     // UDP接收套接字基本设置
-    recv_sock = socket(PF_INET, SOCK_STREAM, 0);
+    recv_sock = socket(PF_INET, SOCK_DGRAM, 0);
 
     memset(&recv_addr, 0, sizeof(recv_addr));
     recv_addr.sin_family = AF_INET;
@@ -185,7 +187,8 @@ void SdnListener::SdnListenHandler()
         memset(recvBuf, 0, SDN_CMD_MAX_LEN);
         memset(ipAddr_s, 0, INET_ADDRSTRLEN);
 
-        recvLen = recvfrom(recv_sock, recvBuf, LIVE_PKT_MAX_LEN, 0, NULL, 0);
+        recv_sock_len = sizeof(recv_addr);
+        recvLen = recvfrom(recv_sock, recvBuf, SDN_CMD_MAX_LEN, 0, (struct sockaddr*)&recv_addr, &recv_sock_len);
         recvBuf[recvLen] = 0;
         cmdType = listener.checkCmdType(recvBuf);
 
