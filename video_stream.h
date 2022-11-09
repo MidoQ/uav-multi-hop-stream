@@ -10,19 +10,15 @@
 #include <mutex>
 #include <thread>
 
-class VideoCapturer {
-private:
-    VideoCapturer();
-    VideoCapturer(const VideoCapturer&) = delete;
-    VideoCapturer& operator=(const VideoCapturer&) = delete;
-
-public:
-    ~VideoCapturer();
-
-    static VideoCapturer& getInstance() {
-        static VideoCapturer instance;
-        return instance;
-    }
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavdevice/avdevice.h>
+#include <libavformat/avformat.h>
+#include <libavutil/dict.h>
+#include <libavutil/imgutils.h>
+#include <libavutil/mathematics.h>
+#include <libavutil/time.h>
+#include <libswscale/swscale.h>
 };
 
 class VideoUploader {
@@ -36,6 +32,36 @@ public:
 
     static VideoUploader& getInstance() {
         static VideoUploader instance;
+        return instance;
+    }
+};
+
+class VideoPublisher {
+private:
+    VideoPublisher();
+    VideoPublisher(const VideoPublisher&) = delete;
+    VideoPublisher& operator=(const VideoPublisher&) = delete;
+
+public:
+    ~VideoPublisher();
+
+    static VideoPublisher& getInstance() {
+        static VideoPublisher instance;
+        return instance;
+    }
+};
+
+class VideoRelayer {
+private:
+    VideoRelayer();
+    VideoRelayer(const VideoRelayer&) = delete;
+    VideoRelayer& operator=(const VideoRelayer&) = delete;
+
+public:
+    ~VideoRelayer();
+
+    static VideoRelayer& getInstance() {
+        static VideoRelayer instance;
         return instance;
     }
 };

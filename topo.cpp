@@ -763,7 +763,7 @@ void NeighborListener::clntHandler(int clnt_sock)
     }
 }
 
-#ifdef TOPO_TEST
+#ifdef DEBUG_PRINT_TOPO
 
 void NeighborTableProbe::printNeighborTable() {
     NeighborTable& table = NeighborTable::getInstance();

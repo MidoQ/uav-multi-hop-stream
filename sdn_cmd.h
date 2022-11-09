@@ -13,14 +13,6 @@
 #include <thread>
 #include <vector>
 
-// 7777 无人机汇报拓扑端口，接收sdn命令端口，UDP
-
-// SDN命令：开启视频传输node1\n；结束视频传输：End1
-
-// 视频发送端口：8800,8811,8822,8833,8844,8855
-
-// [1字节，表示哪个节点；4个字节，表示图片有多长]，UDP发送
-
 #define PORT_SDN 7777
 #define TOPO_PKT_MAX_LEN 512
 #define SDN_CMD_MAX_LEN 64

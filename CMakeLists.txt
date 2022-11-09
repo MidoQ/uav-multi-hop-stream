@@ -22,7 +22,7 @@ else()
    message(FATAL_ERROR "The compiler ${CMAKE_CXX_COMPILER} has no C++11 support. Please use a different C++ compiler.")
 endif()
 
-add_definitions(-DTOPO_TEST)
+# add_definitions(-DDEBUG_PRINT_TOPO)
 # add_definitions(-DDEBUG_PRINT_NEIB_PKT)
 
 set(MODULE_CXXFILE
@@ -33,14 +33,17 @@ set(MODULE_CXXFILE
 # add_executable(uav_net_2 main.cpp ${MODULE_CXXFILE})
 # target_link_libraries(uav_net_2 pthread)
 
-add_executable(dsr_route_test test/dsr_route_test.cpp ${MODULE_CXXFILE})
-target_link_libraries(dsr_route_test pthread)
+# add_executable(dsr_route_test test/dsr_route_test.cpp ${MODULE_CXXFILE})
+# target_link_libraries(dsr_route_test pthread)
 
-add_executable(sys_config_test test/sys_config_test.cpp sys_config.cpp)
-target_link_libraries(sys_config_test pthread)
+# add_executable(sys_config_test test/sys_config_test.cpp sys_config.cpp)
+# target_link_libraries(sys_config_test pthread)
 
-add_executable(topo_test test/topo_test.cpp ${MODULE_CXXFILE})
-target_link_libraries(topo_test pthread)
+# add_executable(topo_test test/topo_test.cpp ${MODULE_CXXFILE})
+# target_link_libraries(topo_test pthread)
+
+add_executable(uav_main main.cpp ${MODULE_CXXFILE})
+target_link_libraries(uav_main pthread avcodec avformat avutil avdevice swscale)
 
 set(CPACK_PROJECT_NAME ${PROJECT_NAME})
 set(CPACK_PROJECT_VERSION ${PROJECT_VERSION})

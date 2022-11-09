@@ -126,7 +126,7 @@ typedef struct Position {
  *          即一个表项存在的间隔可能为 timeoutSec ~ 2*timeoutSec
  */
 class NeighborTable {
-#ifdef TOPO_TEST
+#ifdef DEBUG_PRINT_TOPO
     friend class NeighborTableProbe;
 #endif
 private:
@@ -335,7 +335,7 @@ public:
     static void neighborListen();
 };
 
-#ifdef TOPO_TEST
+#ifdef DEBUG_PRINT_TOPO
 class NeighborTableProbe {
 public:
     void printNeighborTable();
