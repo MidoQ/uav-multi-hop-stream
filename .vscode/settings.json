@@ -60,6 +60,8 @@
         "set": "cpp",
         "fstream": "cpp",
         "sstream": "cpp",
-        "iomanip": "cpp"
+        "iomanip": "cpp",
+        "csignal": "cpp",
+        "future": "cpp"
     }
 }
