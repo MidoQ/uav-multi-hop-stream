@@ -51,6 +51,7 @@ public:
 class VideoPublisher : public Stoppable
 {
 private:
+    int runCount = 0;
     int ret = 0;
     size_t i = 0, exeTime = 0;
     int vsIndex = -1;
@@ -103,7 +104,8 @@ public:
 class VideoRelayer : public Stoppable
 {
 private:
-    int ret;
+    int runCount = 0;
+    int ret = 0;
     int videoIndex = -1;
     int frameIndex = 0;
     bool firstPtsIsSet = false;

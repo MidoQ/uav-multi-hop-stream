@@ -259,6 +259,13 @@ OPEN_OUTPUT_ERR:
 
 void VideoPublisher::run()
 {
+    if (runCount == 0) {
+        runCount++;
+    } else {
+        cout << "VideoPublisher thread exited: a thread is already running.\n";
+        return;
+    }
+
     int argc = 4;
     char argv[][64] = { "./uav_main", "/dev/video0", "rtsp://192.168.15.202:8554/vs02", "20" };
 
@@ -451,7 +458,8 @@ end:
         cerr << "Error occurred\n";
     }
 
-    cout << "VideoPublisher exit!" << endl;
+    runCount--;
+    cout << "VideoPublisher::run() exit!" << endl;
 }
 
 /* VideoRelayer */
@@ -636,6 +644,13 @@ OPEN_OUTPUT_ERR:
 
 void VideoRelayer::run()
 {
+    if (runCount == 0) {
+        runCount++;
+    } else {
+        cout << "VideoRelayer thread exited: a thread is already running.\n";
+        return;
+    }
+
     int argc = 3;
     char argv[][64] = { "./uav_main", "rtsp://192.168.2.101:8554/vs01", "rtsp://192.168.15.200:8554/vs01"};
 
@@ -751,5 +766,6 @@ end:
         return;
     }
 
-    return;
+    runCount--;
+    cout << "VideoRelayer::run() exit!" << endl;
 }

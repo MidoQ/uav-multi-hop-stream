@@ -8,6 +8,7 @@
 #define _DSR_ROUTE_H
 
 #include "utils.h"
+#include "basic_thread.h"
 #include <arpa/inet.h>
 #include <atomic>
 #include <chrono>
@@ -312,12 +313,13 @@ public:
 /**
  * @brief 监听其他节点发来的路由请求并处理
  */
-class DsrRouteListener {
+class DsrRouteListener : public Stoppable
+{
 private:
+    int runCount;
     int recv_sock, brd_sock;
     char* packetBuf;
     struct sockaddr_in brd_addr;
-    bool isListening;
 
 private:
     DsrRouteListener();
@@ -342,7 +344,7 @@ public:
     }
 
     /// @brief 开始监听DSR报文的线程函数，仅能第一次创建有效
-    static void listenPacket();     // thread function
+    void run();     // thread function
 };
 
 /**

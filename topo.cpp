@@ -62,8 +62,7 @@ int LivePacket::serializeToBuf(char* pktBuf)
 
 LiveBroadcast::LiveBroadcast()
 {
-    isBroadcasting = false;
-    isListening = false;
+    runCount = 0;
     intervalSec = DEFAULT_LIVE_BRD_SEC;
 }
 
@@ -71,16 +70,14 @@ LiveBroadcast::~LiveBroadcast()
 {
 }
 
-void LiveBroadcast::pktBroadcasting()
+void LiveBroadcast::run()
 {
-    LiveBroadcast& instance = LiveBroadcast::getInstance();
-
-    if (instance.isBroadcasting) {
-        cout << "LivePacket already broadcasting!\n";
+    if (runCount == 0) {
+        runCount++;
+    } else {
+        cout << "LiveBroadcast thread exited: a thread is already running.\n";
         return;
     }
-
-    instance.isBroadcasting = true;
 
     int pktLen;
     int so_brd = 1;
@@ -95,40 +92,52 @@ void LiveBroadcast::pktBroadcasting()
     pktLen = pkt.serializeToBuf(pktBuf);
 
     // 设置UDP套接字为广播模式
-    instance.brd_sock = socket(PF_INET, SOCK_DGRAM, 0);
+    brd_sock = socket(PF_INET, SOCK_DGRAM, 0);
 
     memset(&brd_addr, 0, sizeof(brd_addr));
     brd_addr.sin_family = AF_INET;
     brd_addr.sin_addr.s_addr = config.getBroadcastIP();
     brd_addr.sin_port = hton16(PORT_LIVE);
 
-    setsockopt(instance.brd_sock, SOL_SOCKET, SO_BROADCAST, (void*)&so_brd, sizeof(so_brd));
+    setsockopt(brd_sock, SOL_SOCKET, SO_BROADCAST, (void*)&so_brd, sizeof(so_brd));
 
     // TODO: 开始时首先随机延时片刻
 
     // 周期性广播
-    while(1) {
+    while (stopRequested() == false) {
         // 连续发送两次
-        sendto(instance.brd_sock, pktBuf, pktLen, 0, (struct sockaddr*)&brd_addr, sizeof(brd_addr));
+        sendto(brd_sock, pktBuf, pktLen, 0, (struct sockaddr*)&brd_addr, sizeof(brd_addr));
         sleep_for(nanoseconds(20000));
-        sendto(instance.brd_sock, pktBuf, pktLen, 0, (struct sockaddr*)&brd_addr, sizeof(brd_addr));
+        sendto(brd_sock, pktBuf, pktLen, 0, (struct sockaddr*)&brd_addr, sizeof(brd_addr));
         
         // 间隔片刻
         // TODO: 再加上一个随机的延迟
-        sleep_for(seconds(instance.intervalSec));
+        sleep_for(seconds(intervalSec));
     }
+
+    runCount--;
+    cout << "LiveBroadcast::run() exit!\n";
 }
 
-void LiveBroadcast::pktListening()
-{
-    LiveBroadcast& instance = LiveBroadcast::getInstance();
+/* LiveListen */
 
-    if (instance.isListening) {
-        cout << "LivePackek already listening!\n";
+LiveListen::LiveListen()
+{
+    runCount = 0;
+}
+
+LiveListen::~LiveListen()
+{
+}
+
+void LiveListen::run()
+{
+    if (runCount == 0) {
+        runCount++;
+    } else {
+        cout << "LiveListen thread exited: a thread is already running.\n";
         return;
     }
-
-    instance.isListening = true;
 
     int recvLen;
     struct sockaddr_in recv_addr;
@@ -138,14 +147,24 @@ void LiveBroadcast::pktListening()
     memset(pktBuf, 0, LIVE_PKT_MAX_LEN);
 
     // 设置UDP监听地址
-    instance.recv_sock = socket(PF_INET, SOCK_DGRAM, 0);
+    recv_sock = socket(PF_INET, SOCK_DGRAM, 0);
 
     memset(&recv_addr, 0, sizeof(recv_addr));
     recv_addr.sin_family = AF_INET;
     recv_addr.sin_addr.s_addr = hton32(INADDR_ANY);
     recv_addr.sin_port = hton16(PORT_LIVE);
 
-    if (bind(instance.recv_sock, (struct sockaddr*)&recv_addr, sizeof(recv_addr)) == -1) {
+    // UDP接收套接字基本设置
+    recv_sock = socket(PF_INET, SOCK_DGRAM, 0);
+
+    struct timeval recvTimeout;     // recvfrom()的超时时间
+    recvTimeout.tv_sec = 3;
+    recvTimeout.tv_usec = 0;
+    if (setsockopt(recv_sock, SOL_SOCKET, SO_RCVTIMEO, &recvTimeout, sizeof(recvTimeout)) == -1) {
+        cerr << __func__ << "setsockopt() failed!\n";
+    }
+
+    if (bind(recv_sock, (struct sockaddr*)&recv_addr, sizeof(recv_addr)) == -1) {
         cout << '[' << __func__ << "]: bind error!\n";
         return;
     }
@@ -156,15 +175,28 @@ void LiveBroadcast::pktListening()
     NeighborTable& neibTable = NeighborTable::getInstance();
 
     // 监听并处理 LivePacket
-    while(1) {
+    while (stopRequested() == false) {
         // 收取报文，解析后加入邻居表
-        recvLen = recvfrom(instance.recv_sock, pktBuf, LIVE_PKT_MAX_LEN, 0, NULL, 0);
+        recvLen = recvfrom(recv_sock, pktBuf, LIVE_PKT_MAX_LEN, 0, NULL, 0);
+        
+        if (recvLen <= 0) {
+            if (errno == EAGAIN) {
+                cout << "No Live packet recved.\n";
+            } else {
+                cerr << "Error accured when recving Live packets!\n";
+            }
+            continue;
+        }
+
         LivePacket pkt;
         pkt.parseFromBuf(pktBuf);
         if (pkt.getIP() == myIP)
             continue;
         neibTable.addNeighbor(pkt.getIP(), pkt.getPositionX(), pkt.getPositionY());
     }
+
+    runCount--;
+    cout << "LiveListen::run() exit!\n";
 }
 
 /* NeighborTable */
@@ -505,6 +537,7 @@ void parseNeighborPkt(const char* pktBuf)
 
 NeighborReporter::NeighborReporter()
 {
+    runCount = 0;
     intervalSec = DEFAULT_NEIB_REPORT_SEC;
 }
 
@@ -513,21 +546,27 @@ NeighborReporter::~NeighborReporter()
 
 }
 
-void NeighborReporter::neighborReport()
+void NeighborReporter::run()
 {
     bool routeFail = false;
     char sendBuf[NEIB_PKT_MAX_LEN];
     in_addr_t nextHopIP, sinkNodeIP;
-    NeighborReporter& reporter = NeighborReporter::getInstance();
     NodeConfig& config = NodeConfig::getInstance();
     DsrRouteGetter routeGetter;
+
+    if (runCount == 0) {
+        runCount++;
+    } else {
+        cout << "NeighborReporter thread exited: a thread is already running.\n";
+        return;
+    }
 
     memset(sendBuf, 0, NEIB_PKT_MAX_LEN);
 
     sinkNodeIP = config.getSinkNodeIP();
 
-    while (1) {
-        sleep_for(seconds(reporter.intervalSec));
+    while (stopRequested() == false) {
+        sleep_for(seconds(intervalSec));
 
         // 获取下一跳IP
         if (config.getNodeType() == NodeType::sink) {
@@ -552,13 +591,13 @@ void NeighborReporter::neighborReport()
         }
 
         // 与下一跳节点连接
-        reporter.send_sock = socket(PF_INET, SOCK_STREAM, 0);
+        send_sock = socket(PF_INET, SOCK_STREAM, 0);
 
-        memset(&(reporter.send_addr), 0, sizeof(reporter.send_addr));
-        reporter.send_addr.sin_family = AF_INET;
-        reporter.send_addr.sin_port = htons(PORT_NEIB_REPORT);
-        reporter.send_addr.sin_addr.s_addr = nextHopIP;
-        if (connect(reporter.send_sock, (struct sockaddr*)&(reporter.send_addr), sizeof(reporter.send_addr)) == -1) {
+        memset(&(send_addr), 0, sizeof(send_addr));
+        send_addr.sin_family = AF_INET;
+        send_addr.sin_port = htons(PORT_NEIB_REPORT);
+        send_addr.sin_addr.s_addr = nextHopIP;
+        if (connect(send_sock, (struct sockaddr*)&(send_addr), sizeof(send_addr)) == -1) {
             routeFail = true;   // 连接失败，下次强制发起路由请求广播
             cerr << __func__ << " : Fail to connect to next hop!\n";
             continue;
@@ -570,17 +609,21 @@ void NeighborReporter::neighborReport()
             cerr << "NeighborPacket (" << len << " bytes) too long!\n";
             continue;
         }
-        send(reporter.send_sock, sendBuf, len, 0);
+        send(send_sock, sendBuf, len, 0);
 
         sleep_for(milliseconds(20));
-        close(reporter.send_sock);
+        close(send_sock);
     }
+
+    runCount--;
+    cout << "NeighborReporter::run() exit!\n";
 }
 
 /* NeighborListener */
 
 NeighborListener::NeighborListener()
 {
+    runCount = 0;
     int option = 1;
     socklen_t optlen = sizeof(option);
 
@@ -593,6 +636,13 @@ NeighborListener::NeighborListener()
     listen_addr.sin_family = AF_INET;
     listen_addr.sin_addr.s_addr = htonl(INADDR_ANY);
     listen_addr.sin_port = htons(PORT_NEIB_REPORT);
+
+    struct timeval acceptTimeout;
+    acceptTimeout.tv_sec = 10;
+    acceptTimeout.tv_usec = 0;
+    if (setsockopt(listen_sock, SOL_SOCKET, SO_RCVTIMEO, &acceptTimeout, sizeof(acceptTimeout)) == -1) {
+        cerr << __func__ << "setsockopt() failed!\n";
+    }
 
     if (bind(listen_sock, (struct sockaddr*)&listen_addr, sizeof(listen_addr)) == -1) {
         cerr << __func__ << " : bind() error\n";
@@ -647,7 +697,6 @@ void NeighborListener::relayNeighborPkt(const char* pktBuf, size_t len)
     bool routeFail = false;
     in_addr_t nextHopIP;
     NodeConfig& config = NodeConfig::getInstance();
-    NeighborListener& listener = NeighborListener::getInstance();
     in_addr_t sinkNodeIP = config.getSinkNodeIP();
     DsrRouteGetter routeGetter;
 
@@ -672,49 +721,62 @@ void NeighborListener::relayNeighborPkt(const char* pktBuf, size_t len)
         }
 
         // 与下一跳节点连接
-        listener.send_sock = socket(PF_INET, SOCK_STREAM, 0);
+        send_sock = socket(PF_INET, SOCK_STREAM, 0);
 
-        memset(&(listener.send_addr), 0, sizeof(listener.send_addr));
-        listener.send_addr.sin_family = AF_INET;
-        listener.send_addr.sin_port = htons(PORT_NEIB_REPORT);
-        listener.send_addr.sin_addr.s_addr = nextHopIP;
-        if (connect(listener.send_sock, (struct sockaddr*)&(listener.send_addr), sizeof(listener.send_addr)) == -1) {
+        memset(&(send_addr), 0, sizeof(send_addr));
+        send_addr.sin_family = AF_INET;
+        send_addr.sin_port = htons(PORT_NEIB_REPORT);
+        send_addr.sin_addr.s_addr = nextHopIP;
+        if (connect(send_sock, (struct sockaddr*)&(send_addr), sizeof(send_addr)) == -1) {
             routeFail = true;   // 连接失败，下次强制发起路由请求广播
             cerr << __func__ << " : Fail to connect to next hop!\n";
             continue;
         }
 
         // 直接转发邻居表接收缓冲区的内容
-        send(listener.send_sock, pktBuf, len, 0);
+        send(send_sock, pktBuf, len, 0);
 
         sleep_for(milliseconds(20));
-        close(listener.send_sock);
+        close(send_sock);
         break;
     }
 }
 
-void NeighborListener::neighborListen()
+void NeighborListener::run()
 {
     int clnt_sock;
     socklen_t clnt_addr_size;
     struct sockaddr_in clnt_addr;
 
-    NeighborListener& listener = NeighborListener::getInstance();
+    if (runCount == 0) {
+        runCount++;
+    } else {
+        cout << "NeighborListener thread exited: a thread is already running.\n";
+        return;
+    }
 
-    if (listen(listener.listen_sock, 10) == -1) {
+    if (listen(listen_sock, 10) == -1) {
         cerr << __func__ << " : listen() error";
         exit(1);
     }
 
-    while (1) {
+    while (stopRequested() == false) {
         clnt_addr_size = sizeof(clnt_addr);
         // cout << __func__ << ": Listening for neighbor packet...\n";
-        clnt_sock = accept(listener.listen_sock, (struct sockaddr*)&clnt_addr, &clnt_addr_size);
+        clnt_sock = accept(listen_sock, (struct sockaddr*)&clnt_addr, &clnt_addr_size);
         // cout << __func__ << ": New client connected!\n";
 
-        std::thread clnt_thread(NeighborListener::clntHandler, clnt_sock);
+        if (clnt_sock < 0) {
+            cout << "NeighborListener: no client accepted.\n";
+            continue;
+        }
+
+        std::thread clnt_thread(&NeighborListener::clntHandler, this, clnt_sock);
         clnt_thread.detach();
     }
+
+    runCount--;
+    cout << "NeighborListener::run() exit!\n";
 }
 
 void NeighborListener::clntHandler(int clnt_sock)
@@ -732,6 +794,10 @@ void NeighborListener::clntHandler(int clnt_sock)
         recvLen = 0;
         while (recvLen < NEIB_PKT_HEADER_LEN) {
             int len = recv(clnt_sock, pRecv, NEIB_PKT_HEADER_LEN - recvLen, 0);
+            if (len == 0) {
+                // cout << "NeighborListener: socket closed.\n";
+                return;
+            }
             pRecv += len;
             recvLen += len;
         }

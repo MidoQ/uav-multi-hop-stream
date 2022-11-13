@@ -2,6 +2,7 @@
 
 SdnReporter::SdnReporter()
 {
+    runCount = 0;
     reportInterval = DEFAULT_TOPO_REPORT_SEC;
     nodeList.clear();
     mat.clear();
@@ -69,7 +70,7 @@ size_t SdnReporter::serializeTopo(char* buf)
     return 1 + nodeCount + nodeCount * nodeCount + 32 * (nodeCount - 1);
 }
 
-void SdnReporter::SdnReportHandler()
+void SdnReporter::run()
 {
     int send_sock;
     int sendLen;
@@ -78,6 +79,18 @@ void SdnReporter::SdnReportHandler()
     SdnReporter& reporter = SdnReporter::getInstance();
     NodeConfig& config = NodeConfig::getInstance();
     TopoGraph& topo = TopoGraph::getInstance();
+
+    if (config.getNodeType() != NodeType::sink) {
+        cout << "SdnReporter thread exited: This node is not a sink node.\n";
+        return;
+    }
+
+    if (runCount == 0) {
+        runCount++;
+    } else {
+        cout << "SdnReporter thread exited: a thread is already running.\n";
+        return;
+    }
 
     memset(sendBuf, 0, TOPO_PKT_MAX_LEN);
 
@@ -90,7 +103,7 @@ void SdnReporter::SdnReportHandler()
     send_addr.sin_port = hton16(PORT_SDN);
 
     // 循环定期发送拓扑信息给控制器
-    while(1) {
+    while (stopRequested() == false) {
         sleep_for(seconds(reporter.getReportInterval()));
         topo.toMatrix(reporter.nodeList, reporter.mat);
         reporter.setPosListFromTopo();
@@ -98,21 +111,14 @@ void SdnReporter::SdnReportHandler()
         sendto(send_sock, sendBuf, sendLen, 0, (struct sockaddr*)&send_addr, sizeof(send_addr));
         cout << "Topo uploaded!\n";
     }
-}
 
-void SdnReporter::startReport()
-{
-    NodeConfig& config = NodeConfig::getInstance();
-    if (config.getNodeType() != NodeType::sink) {
-        cerr << __func__ << ": Failed! This node is not a sink node!\n";
-        return;
-    }
-    std::thread topoReport_thread(SdnReportHandler);
-    topoReport_thread.detach();
+    runCount--;
+    cout << "SdnReporter::run() exit!\n";
 }
 
 SdnListener::SdnListener()
 {
+    runCount = 0;
     in_addr tmp;
     char networkIP_s[INET_ADDRSTRLEN] = "192.168.2.0";
     inet_pton(AF_INET, networkIP_s, &tmp);
@@ -155,7 +161,7 @@ in_addr_t SdnListener::numstr2IP(char* buf)
     return res;
 }
 
-void SdnListener::SdnListenHandler()
+void SdnListener::run()
 {
     int recv_sock;
     int recvLen;
@@ -164,12 +170,31 @@ void SdnListener::SdnListenHandler()
     struct sockaddr_in recv_addr;
     SdnCmdType cmdType;
     char recvBuf[SDN_CMD_MAX_LEN];
-    SdnListener& listener = SdnListener::getInstance();
+    NodeConfig& config = NodeConfig::getInstance();
+
+    if (config.getNodeType() != NodeType::sink) {
+        cout << "SdnListener thread exited: This node is not a sink node.\n";
+        return;
+    }
+
+    if (runCount == 0) {
+        runCount++;
+    } else {
+        cout << "SdnListener thread exited: a thread is already running.\n";
+        return;
+    }
 
     memset(recvBuf, 0, SDN_CMD_MAX_LEN);
 
     // UDP接收套接字基本设置
     recv_sock = socket(PF_INET, SOCK_DGRAM, 0);
+
+    struct timeval recvTimeout;     // recvfrom()的超时时间
+    recvTimeout.tv_sec = 3;
+    recvTimeout.tv_usec = 0;
+    if (setsockopt(recv_sock, SOL_SOCKET, SO_RCVTIMEO, &recvTimeout, sizeof(recvTimeout)) == -1) {
+        cerr << __func__ << "setsockopt() failed!\n";
+    }
 
     memset(&recv_addr, 0, sizeof(recv_addr));
     recv_addr.sin_family = AF_INET;
@@ -183,23 +208,33 @@ void SdnListener::SdnListenHandler()
 
     // 监听并处理 SDN 命令
     char ipAddr_s[INET_ADDRSTRLEN];
-    while(1) {
+    while (stopRequested() == false) {
         memset(recvBuf, 0, SDN_CMD_MAX_LEN);
         memset(ipAddr_s, 0, INET_ADDRSTRLEN);
 
         recv_sock_len = sizeof(recv_addr);
         recvLen = recvfrom(recv_sock, recvBuf, SDN_CMD_MAX_LEN, 0, (struct sockaddr*)&recv_addr, &recv_sock_len);
+
+        if (recvLen <= 0) {
+            if (errno == EAGAIN) {
+                // cout << "No SDN packet recved.\n";
+            } else {
+                cerr << "Error accured when recving SDN packets!\n";
+            }
+            continue;
+        }
+        
         recvBuf[recvLen] = 0;
-        cmdType = listener.checkCmdType(recvBuf);
+        cmdType = checkCmdType(recvBuf);
 
         switch (cmdType) {
         case SdnCmdType::startVideo :
-            targetNodeIP = listener.numstr2IP(recvBuf);
+            targetNodeIP = numstr2IP(recvBuf);
             inet_ntop(AF_INET, &targetNodeIP, ipAddr_s, INET_ADDRSTRLEN);
             cout << "SDN commmand: start video at " << ipAddr_s << endl;
             break;
         case SdnCmdType::endVideo :
-            targetNodeIP = listener.numstr2IP(recvBuf);
+            targetNodeIP = numstr2IP(recvBuf);
             inet_ntop(AF_INET, &targetNodeIP, ipAddr_s, INET_ADDRSTRLEN);
             cout << "SDN commmand: end video at " << ipAddr_s << endl;
             break;
@@ -208,15 +243,7 @@ void SdnListener::SdnListenHandler()
             break;
         }
     }
-}
 
-void SdnListener::startListen()
-{
-    NodeConfig& config = NodeConfig::getInstance();
-    if (config.getNodeType() != NodeType::sink) {
-        cerr << __func__ << ": Failed! This node is not a sink node!\n";
-        return;
-    }
-    std::thread topoListen_thread(SdnListenHandler);
-    topoListen_thread.detach();
+    runCount--;
+    cout << "SdnListener::run() exit!\n";
 }

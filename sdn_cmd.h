@@ -4,6 +4,7 @@
 #include "sys_config.h"
 #include "topo.h"
 #include "utils.h"
+#include "basic_thread.h"
 #include <arpa/inet.h>
 #include <chrono>
 #include <cstring>
@@ -29,9 +30,14 @@ typedef struct Polar {
     double arg; // 弧度
 } Polar;
 
-class SdnReporter {
+/**
+ * @brief 向控制器汇报拓扑信息等
+ */
+class SdnReporter : public Stoppable
+{
 private:
-    size_t reportInterval;  // 拓扑汇报的时间间隔，单位为秒
+    int runCount;
+    size_t reportInterval; // 拓扑汇报的时间间隔，单位为秒
     std::vector<in_addr_t> nodeList;
     std::vector<std::vector<char>> mat;
     std::map<in_addr_t, Position> posList;
@@ -53,8 +59,6 @@ private:
 
     size_t serializeTopo(char* buf);
 
-    static void SdnReportHandler();
-
 public:
     ~SdnReporter();
 
@@ -63,7 +67,7 @@ public:
         return instance;
     }
 
-    void startReport();
+    void run();
 };
 
 enum SdnCmdType : char {
@@ -72,8 +76,13 @@ enum SdnCmdType : char {
     endVideo = 2
 };
 
-class SdnListener {
+/**
+ * @brief 接收控制器的SDN指令
+ */
+class SdnListener : public Stoppable
+{
 private:
+    int runCount;
     in_addr_t networkIP;
 
 private:
@@ -85,8 +94,6 @@ private:
 
     in_addr_t numstr2IP(char* buf);
 
-    static void SdnListenHandler();
-
 public:
     ~SdnListener();
 
@@ -95,7 +102,7 @@ public:
         return instance;
     }
 
-    void startListen();
+    void run();
 };
 
 #endif

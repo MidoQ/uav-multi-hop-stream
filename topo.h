@@ -4,6 +4,7 @@
 #include "dsr_route.h"
 #include "sys_config.h"
 #include "utils.h"
+#include "basic_thread.h"
 #include <arpa/inet.h>
 #include <atomic>
 #include <chrono>
@@ -74,13 +75,13 @@ public:
 };
 
 /**
- * @brief 存活广播（邻居发现），即报告自身的存活，和监听其他节点的存活
+ * @brief 存活广播（邻居发现），报告自身的存活
  */
-class LiveBroadcast {
+class LiveBroadcast : public Stoppable
+{
 private:
-    int brd_sock, recv_sock;
-    bool isBroadcasting;
-    bool isListening;
+    int runCount;
+    int brd_sock;
     int intervalSec;
 
 private:
@@ -97,17 +98,41 @@ public:
         return instance;
     }
 
-    /// @brief 线程函数，定期广播LiveBroadcast
-    static void pktBroadcasting(); // thread function
+    /// @brief 线程函数，定期广播 LivePacket
+    void run(); // thread function
 
-    /// @brief 线程函数，持续监听LiveBroadcast
-    static void pktListening(); // thread function
-
-    /// @brief 设置定期广播LiveBroadcast的间隔
+    /// @brief 设置定期广播 LivePacket 的间隔
     /// @param _intervalSec 间隔秒数
     void setInterval(int _intervalSec) {
         this->intervalSec = _intervalSec;
     }
+};
+
+/**
+ * @brief 存活广播（邻居发现）的监听，即监听其他节点的存活
+ */
+class LiveListen : public Stoppable
+{
+private:
+    int runCount;
+    int recv_sock;
+
+private:
+    LiveListen();
+    LiveListen(const LiveListen&) = delete;
+    LiveListen& operator=(const LiveListen&) = delete;
+
+public:
+    ~LiveListen();
+
+    static LiveListen& getInstance()
+    {
+        static LiveListen instance;
+        return instance;
+    }
+
+    /// @brief 线程函数，持续监听 LivePacket
+    void run(); // thread function
 };
 
 /**
@@ -280,8 +305,10 @@ public:
 /**
  * @brief 邻居汇报报文发送
  */
-class NeighborReporter {
+class NeighborReporter : public Stoppable
+{
 private:
+    int runCount;
     int intervalSec; // 邻居表汇报的间隔，默认为5秒
     int send_sock;
     struct sockaddr_in send_addr;
@@ -300,14 +327,16 @@ public:
     }
 
     /// @brief 线程函数，定期向汇聚节点报告邻居表信息
-    static void neighborReport();
+    void run();
 };
 
 /**
  * @brief 邻居汇报报文接收
  */
-class NeighborListener {
+class NeighborListener : public Stoppable
+{
 private:
+    int runCount;
     int listen_sock, send_sock;
     struct sockaddr_in listen_addr, send_addr;
 private:
@@ -315,13 +344,13 @@ private:
     NeighborListener(const NeighborListener&) = delete;
     NeighborListener& operator=(const NeighborListener&) = delete;
 
-    static void printNeighborPkt(char* pktBuf);
+    void printNeighborPkt(char* pktBuf);
 
-    static void relayNeighborPkt(const char* pktBuf, size_t len);
+    void relayNeighborPkt(const char* pktBuf, size_t len);
 
     /// @brief 线程函数，接受到客户端连接后，为其新建一个线程进行数据接收和处理
     /// @param clnt_sock 客户端套接字
-    static void clntHandler(int clnt_sock);
+    void clntHandler(int clnt_sock);
 
 public:
     ~NeighborListener();
@@ -332,7 +361,7 @@ public:
     }
 
     /// @brief 线程函数，监听邻居表信息并转发（普通节点）或解析（汇聚节点）
-    static void neighborListen();
+    void run();
 };
 
 #ifdef DEBUG_PRINT_TOPO

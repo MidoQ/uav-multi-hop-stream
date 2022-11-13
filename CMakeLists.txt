@@ -28,7 +28,8 @@ endif()
 set(MODULE_CXXFILE
    utils.cpp sys_config.cpp
    dsr_route.cpp topo.cpp
-   sdn_cmd.cpp video_stream.cpp)
+   sdn_cmd.cpp video_stream.cpp
+   basic_thread.cpp)
 
 # add_executable(uav_net_2 main.cpp ${MODULE_CXXFILE})
 # target_link_libraries(uav_net_2 pthread)

@@ -432,7 +432,7 @@ DsrRouteListener::DsrRouteListener()
 {
     struct sockaddr_in recv_addr;
 
-    isListening = false;
+    runCount = 0;
 
     NodeConfig& config = NodeConfig::getInstance();
     in_addr_t broadcast_IP = config.getBroadcastIP();
@@ -443,6 +443,13 @@ DsrRouteListener::DsrRouteListener()
 
     // 设置UDP监听地址
     recv_sock = socket(PF_INET, SOCK_DGRAM, 0);
+
+    struct timeval recvTimeout;     // recvfrom()的超时时间
+    recvTimeout.tv_sec = 3;
+    recvTimeout.tv_usec = 0;
+    if (setsockopt(recv_sock, SOL_SOCKET, SO_RCVTIMEO, &recvTimeout, sizeof(recvTimeout)) == -1) {
+        cerr << __func__ << "setsockopt() failed!\n";
+    }
 
     memset(&recv_addr, 0, sizeof(recv_addr));
     recv_addr.sin_family = AF_INET;
@@ -468,34 +475,47 @@ DsrRouteListener::~DsrRouteListener()
 {
     close(recv_sock);
     delete[] packetBuf;
+    // cout << "DsrRouteListener destructed.\n";
 }
 
-void DsrRouteListener::listenPacket()
+void DsrRouteListener::run()
 {
     int recvLen;
     DsrRoutePacket packetInfo;
-    DsrRouteListener& listener = DsrRouteListener::getInstance();
 
-    if (listener.isListening) {
-        cout << "Dsr Route already listening!\n";
+    if (runCount == 0) {
+        runCount++;
+    } else {
+        cout << "DsrRouteListener thread exited: a thread is already running.\n";
         return;
     }
-    
-    listener.isListening = true;
 
-    while (1) {
-        recvLen = recvfrom(listener.recv_sock, listener.packetBuf, DSR_PKT_MAX_LEN, 0, NULL, 0);
-        packetInfo.parseFromBuf(listener.packetBuf);
+    while (stopRequested() == false) {
+        recvLen = recvfrom(recv_sock, packetBuf, DSR_PKT_MAX_LEN, 0, NULL, 0);
+        
+        if (recvLen <= 0) {
+            if (errno == EAGAIN) {
+                // cout << "No DSR packet recved.\n";
+            } else {
+                cerr << "Error accured when recving DSR packets!\n";
+            }
+            continue;
+        }
+
+        packetInfo.parseFromBuf(packetBuf);
 
         // 处理报文
         if (packetInfo.getType() == DsrPacketType::request) {
-            listener.processRequestPkt(packetInfo);
+            processRequestPkt(packetInfo);
         } else if (packetInfo.getType() == DsrPacketType::response) {
-            listener.processResponsePkt(packetInfo);
+            processResponsePkt(packetInfo);
         } else {
             cout << '[' << __func__ << "] Unknown DSR packet type!\n";
         }
     }
+
+    runCount--;
+    cout << "DsrRouteListener::run() exit!" << endl;
 }
 
 void DsrRouteListener::processRequestPkt(DsrRoutePacket& pkt)
