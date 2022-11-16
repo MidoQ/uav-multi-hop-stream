@@ -1,10 +1,301 @@
 #include "video_stream.h"
 
+std::mutex mtx4pubList;
+std::unordered_set<std::string> publishingList;   // 已推流URL列表
+
+static void addToPubList(char* publishUrl)
+{
+    cout << "Adding publishUrl: " << publishUrl << '\n';
+    std::unique_lock<std::mutex> lock(mtx4pubList);
+    publishingList.insert(std::string(publishUrl));
+    lock.unlock();
+}
+
+static void eraseFromPubList(char* publishUrl)
+{
+    cout << "Erasing publishUrl: " << publishUrl << '\n';
+    std::unique_lock<std::mutex> lock(mtx4pubList);
+    publishingList.erase(std::string(publishUrl));
+    lock.unlock();
+}
+
+static bool findInPubList(char* publishUrl)
+{
+    cout << "Finding publishUrl: " << publishUrl << '\n';
+    std::unique_lock<std::mutex> lock(mtx4pubList);
+    return publishingList.find(std::string(publishUrl)) != publishingList.end();
+}
+
+struct PacketRecvQueue {
+    std::mutex mtx;
+    std::condition_variable cond;
+    std::queue<VideoTransPacket> q;
+} packetRecvQueue;
+
+struct PacketSendQueue {
+    std::mutex mtx;
+    std::condition_variable cond;
+    std::queue<VideoTransPacket> q;
+} packetSendQueue;
+
+class PacketListener : public Stoppable
+{
+private:
+    int runCount;
+
+public:
+    PacketListener()
+    {
+        runCount = 0;
+    }
+
+    ~PacketListener()
+    {
+    }
+
+    void run()
+    {
+        if (runCount == 0) {
+            runCount++;
+        } else {
+            cout << "PacketListener thread exited: a thread is already running.\n";
+            return;
+        }
+
+        int recv_sock;
+        int recvLen;
+        socklen_t recv_sock_len;
+        struct sockaddr_in recv_addr;
+        char recvBuf[VT_PKT_MAX_LEN];
+
+        memset(recvBuf, 0, VT_PKT_MAX_LEN);
+
+        // UDP接收套接字基本设置
+        recv_sock = socket(PF_INET, SOCK_DGRAM, 0);
+
+        struct timeval recvTimeout;     // recvfrom()的超时时间
+        recvTimeout.tv_sec = 3;
+        recvTimeout.tv_usec = 0;
+        if (setsockopt(recv_sock, SOL_SOCKET, SO_RCVTIMEO, &recvTimeout, sizeof(recvTimeout)) == -1) {
+            cerr << __func__ << "setsockopt() failed!\n";
+        }
+
+        memset(&recv_addr, 0, sizeof(recv_addr));
+        recv_addr.sin_family = AF_INET;
+        recv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        recv_addr.sin_port = htons(PORT_VIDEO_TRANS_PKT);
+
+        if (bind(recv_sock, (struct sockaddr*)&recv_addr, sizeof(recv_addr)) == -1) {
+            cerr << __func__ << " : bind() error\n";
+            return;
+        }
+
+        // 循环接收
+        while (stopRequested() == false)  {
+            memset(recvBuf, 0, VT_PKT_MAX_LEN);
+
+            recv_sock_len = sizeof(recv_addr);
+            recvLen = recvfrom(recv_sock, recvBuf, VT_PKT_MAX_LEN, 0, (struct sockaddr*)&recv_addr, &recv_sock_len);
+
+            if (recvLen <= 0) {
+                if (errno == EAGAIN) {
+                    // cout << "No VideoTransPacket recved.\n";
+                } else {
+                    cerr << "Error accured when recving VideoTransPacket!\n";
+                }
+                continue;
+            }
+
+            VideoTransPacket pkt;
+            pkt.parseFromBuf(recvBuf);
+
+            std::unique_lock<std::mutex> lock(packetRecvQueue.mtx);
+            packetRecvQueue.q.push(pkt);
+            packetRecvQueue.cond.notify_all();
+            lock.unlock();
+        }
+
+        runCount--;
+        cout << "PacketListener::run() exit!\n";
+    }
+
+} packetListener;
+
+class PacketSender : public Stoppable
+{
+private:
+    int runCount;
+    int send_sock;
+    int sendLen;
+    struct sockaddr_in send_addr;
+    char sendBuf[VT_PKT_MAX_LEN];
+
+private:
+    void sendVTPakcet(VideoTransPacket& pkt)
+    {
+        memset(sendBuf, 0, VT_PKT_MAX_LEN);
+        sendLen = pkt.serializeToBuf(sendBuf);
+
+        send_addr.sin_family = AF_INET;
+        send_addr.sin_addr.s_addr = pkt.getDst();
+        send_addr.sin_port = hton16(PORT_VIDEO_TRANS_PKT);
+
+        sendto(send_sock, sendBuf, sendLen, 0, (struct sockaddr*)&send_addr, sizeof(send_addr));
+    }
+
+public:
+    PacketSender()
+    {
+        runCount = 0;
+    }
+
+    ~PacketSender()
+    {
+    }
+
+    void run()
+    {
+        if (runCount == 0) {
+            runCount++;
+        } else {
+            cout << "PacketSender thread exited: a thread is already running.\n";
+            return;
+        }
+
+        memset(sendBuf, 0, VT_PKT_MAX_LEN);
+
+        send_sock = socket(PF_INET, SOCK_DGRAM, 0);
+
+        while (stopRequested() == false) {
+            std::unique_lock<std::mutex> lock(packetSendQueue.mtx);
+            while (stopRequested() == false && packetSendQueue.q.empty()) {
+                packetSendQueue.cond.wait(lock);
+            }
+
+            while (!packetSendQueue.q.empty()) {
+                VideoTransPacket pkt = packetSendQueue.q.front();
+                sendVTPakcet(pkt);
+                packetSendQueue.q.pop();
+                cout << "VT Packet send!\n";
+            }
+        }
+
+        runCount--;
+        cout << "PacketSender::run() exit!\n";
+    }
+
+} packetSender;
+
+/* VideoTransPacket */
+
+VideoTransPacket::VideoTransPacket()
+{
+    cmd = VideoTransCmd::unknown;
+    src = 0;
+    dst = 0;
+    requester = 0;
+    capturer = 0;
+}
+
+VideoTransPacket::VideoTransPacket(VideoTransCmd cmd,
+    in_addr_t src, in_addr_t dst, in_addr_t requester, in_addr_t capturer)
+{
+    this->cmd = cmd;
+    this->src = src;
+    this->dst = dst;
+    this->requester = requester;
+    this->capturer = capturer;
+}
+
+VideoTransPacket::~VideoTransPacket()
+{
+}
+
+void VideoTransPacket::parseFromBuf(const char* pktBuf)
+{
+    cmd = (VideoTransCmd)pktBuf[0];
+
+    uint32_t* cur = (uint32_t*)(pktBuf + 1);
+
+    src = ntoh32(*cur);
+    cur++;
+
+    dst = ntoh32(*cur);
+    cur++;
+
+    requester = ntoh32(*cur);
+    cur++;
+
+    capturer = ntoh32(*cur);
+    cur++;
+}
+
+int VideoTransPacket::serializeToBuf(char* pktBuf)
+{
+    pktBuf[0] = (char)cmd;
+
+    uint32_t* cur = (uint32_t*)(pktBuf + 1);
+
+    *cur = hton32(src);
+    cur++;
+
+    *cur = hton32(dst);
+    cur++;
+
+    *cur = hton32(requester);
+    cur++;
+
+    *cur = hton32(capturer);
+    cur++;
+
+    return 4 * 4 + 1;
+}
+
+void VideoTransPacket::printPktInfo()
+{
+    char cmd_s[32] = { 0 };
+    char src_s[INET_ADDRSTRLEN];
+    char dst_s[INET_ADDRSTRLEN];
+    char requester_s[INET_ADDRSTRLEN];
+    char capturer_s[INET_ADDRSTRLEN];
+
+    switch (this->cmd) {
+        case VideoTransCmd::unknown:
+            strcpy(cmd_s, "unknown");
+            break;
+        case VideoTransCmd::start:
+            strcpy(cmd_s, "start");
+            break;
+        case VideoTransCmd::ready:
+            strcpy(cmd_s, "ready");
+            break;
+        case VideoTransCmd::stop:
+            strcpy(cmd_s, "stop");
+            break;
+        case VideoTransCmd::lost:
+            strcpy(cmd_s, "lost");
+            break;
+        default:
+            break;
+    }
+
+    inet_ntop(AF_INET, &(this->src), src_s, INET_ADDRSTRLEN);
+    inet_ntop(AF_INET, &(this->dst), dst_s, INET_ADDRSTRLEN);
+    inet_ntop(AF_INET, &(this->requester), requester_s, INET_ADDRSTRLEN);
+    inet_ntop(AF_INET, &(this->capturer), capturer_s, INET_ADDRSTRLEN);
+
+    cout << "\n============== VT Packet =================\n"
+         << "cmd: " << cmd_s << '\n'
+         << "src: " << src_s << '\t' << "dst: " << dst_s << '\n'
+         << "req: " << requester_s << '\t' << "cap: " << capturer_s << '\n'
+         << "==========================================" << endl;
+}
 
 /* VideoPublisher */
 
 VideoPublisher::VideoPublisher()
 {
+    ioIsSet = false;
     memset(inFilename, 0, 256);
     memset(outFilename, 0, 256);
     memset(errmsg, 0, 1024);
@@ -257,6 +548,20 @@ OPEN_OUTPUT_ERR:
     return nullptr;
 }
 
+int VideoPublisher::setIOName(const char deviceName[], const char publishUrl[])
+{
+    if (strlen(deviceName) >= 256 || strlen(publishUrl) >= 256) {
+        cerr << "VideoPublisher::run() : arguments too long, must shorter than 256 characters\n";
+        return -1;
+    }
+
+    strcpy(inFilename, deviceName);
+    strcpy(outFilename, publishUrl);
+
+    ioIsSet = true;
+    return 0;
+}
+
 void VideoPublisher::run()
 {
     if (runCount == 0) {
@@ -266,26 +571,18 @@ void VideoPublisher::run()
         return;
     }
 
-    int argc = 4;
-    char argv[][64] = { "./uav_main", "/dev/video0", "rtsp://192.168.15.202:8554/vs02", "20" };
-
-    if (argc < 4) {
-        cerr << "Usage: " << argv[0] << " <input> <rtsp_addr> <duration in sec>\n"
-             << "e.g.1 " << argv[0] << " /dev/video0 rtsp://192.168.15.200:8554/mystream 60\n"
-             << "e.g.2 " << argv[0] << " \"video=2K USB Camera\" rtsp://127.0.0.1:8554/mystream 120\n";
-        exit(1);
+    if (!ioIsSet) {
+        cerr << __func__ << "Input & output information is not set yet!\n";
+        return;
     }
 
-    // 基本设置初始化
-    strcpy(inFilename, argv[1]);
-    strcpy(outFilename, argv[2]);
-    exeTime = std::stoi(argv[3]);
-    cout << "INPUT: " << inFilename << "\nOUTPUT: " << outFilename << "\n";
+    cout << "Video capture INPUT: " << inFilename << "\nVideo capture OUTPUT: " << outFilename << "\n";
 
+    // 基本设置初始化
     avdevice_register_all();
     avformat_network_init();
 
-    cout << "av_version_info = " << av_version_info() << "\n";
+    cout << "FFMPEG version = " << av_version_info() << "\n";
 
     // 打开输入上下文
     ifmtCtx = openInputCtx(inFilename);
@@ -352,8 +649,10 @@ void VideoPublisher::run()
                      pH264CodecCtx->width, pH264CodecCtx->height, pH264CodecCtx->pix_fmt,
                      SWS_BILINEAR, NULL, NULL, NULL);
 
+    // 加入已推流节点列表
+    addToPubList(outFilename);
+
     // 循环采集、编码、推流
-    // for (size_t cameraFrame = 0; cameraFrame < exeTime * 30; cameraFrame++) {
     for (size_t cameraFrame = 0; stopRequested() == false; cameraFrame++) {
 
         // 从摄像头读取一帧数据
@@ -423,10 +722,13 @@ void VideoPublisher::run()
                     if (ret < 0) {
                         av_make_error_string(errmsg, sizeof(errmsg), ret);
                         cerr << "Send packet failed: [" << ret << "] " << errmsg << "\n";
-                    } else {
+                    }
+                    #ifdef DEBUG_PRINT_VS_COUNT
+                    else {
                         if (frameIndex % 100 == 0)
                             cout << "Send " << std::setw(5) << frameIndex << " packet successfully!\n";
                     }
+                    #endif
                 }
                 else {
                     cout << "Waiting for H264 encoder...\n";
@@ -438,6 +740,8 @@ void VideoPublisher::run()
     // av_write_trailer(ofmtCtx);
 
 end:
+    eraseFromPubList(outFilename);
+
     avformat_close_input(&ifmtCtx);
 
     if (pFrameYUV->data) {
@@ -466,12 +770,22 @@ end:
 
 VideoRelayer::VideoRelayer()
 {
-
+    ioIsSet = false;
+    memset(inFilename, 0, 256);
+    memset(outFilename, 0, 256);
+    memset(errmsg, 0, 1024);
 }
 
-VideoRelayer::VideoRelayer(char pullAddr[])
+VideoRelayer::VideoRelayer(const char pullUrl[], const char publishUrl[])
 {
-
+    if (strlen(pullUrl) >= 256 || strlen(publishUrl) >= 256) {
+        cerr << __func__ << "arguments too long, must shorter than 256 characters\n";
+        return;
+    } else {
+        strcpy(inFilename, pullUrl);
+        strcpy(outFilename, publishUrl);
+        ioIsSet = true;
+    }
 }
 
 VideoRelayer::~VideoRelayer()
@@ -642,6 +956,20 @@ OPEN_OUTPUT_ERR:
     return nullptr;
 }
 
+// int VideoRelayer::setIOName(const char pullUrl[], const char publishUrl[])
+// {
+//     if (strlen(pullUrl) >= 256 || strlen(publishUrl) >= 256) {
+//         cerr << "VideoRelayer::run() : arguments too long, must shorter than 256 characters\n";
+//         return -1;
+//     }
+
+//     strcpy(inFilename, pullUrl);
+//     strcpy(outFilename, publishUrl);
+
+//     ioIsSet = true;
+//     return 0;
+// }
+
 void VideoRelayer::run()
 {
     if (runCount == 0) {
@@ -651,19 +979,7 @@ void VideoRelayer::run()
         return;
     }
 
-    int argc = 3;
-    char argv[][64] = { "./uav_main", "rtsp://192.168.2.101:8554/vs01", "rtsp://192.168.15.200:8554/vs01"};
-
-    if (argc < 3) {
-        printf("Usage: %s <pull_addr> <republish_addr>\n"
-               "e.g. %s rtsp://192.168.2.101:8554/vs101 rtsp://192.168.15.200:8554/vs101\n"
-               , argv[0], argv[0]);
-        exit(1);
-    }
-
-    strcpy(inFilename, argv[1]);
-    strcpy(outFilename, argv[2]);
-    cout << "INPUT: " << inFilename << "\nOUTPUT: " << outFilename << "\n";
+    cout << "Video relay INPUT: " << inFilename << "\nVideo relay OUTPUT: " << outFilename << "\n";
 
     // 初始化
     avformat_network_init();
@@ -700,6 +1016,9 @@ void VideoRelayer::run()
         ret = av_read_frame(ifmtCtx, &pkt);
         av_packet_unref(&pkt);
     }
+
+    // 加入已推流节点列表
+    addToPubList(outFilename);
 
     // while (1) {
     for (size_t i = 0; stopRequested() == false; i++) {
@@ -738,10 +1057,13 @@ void VideoRelayer::run()
         if (ret < 0) {
             av_make_error_string(errmsg, sizeof(errmsg), ret);
             cerr << "Relay packet failed: " << errmsg << '\n';
-        } else {
+        }
+        #ifdef DEBUG_PRINT_VS_COUNT
+        else {
             if (frameIndex % 100 == 0)
                 cout << "Relay " << std::setw(5) << frameIndex << " packet successfully!\n";
         }
+        #endif
 
         av_packet_unref(&pkt);
     }
@@ -754,6 +1076,8 @@ void VideoRelayer::run()
     // av_write_trailer(ofmtCtx);
 
 end:
+    eraseFromPubList(outFilename);
+
     avformat_close_input(&ifmtCtx);
 
     /* close output */
@@ -768,4 +1092,331 @@ end:
 
     runCount--;
     cout << "VideoRelayer::run() exit!" << endl;
+}
+
+/* VideoTransCtrler */
+
+VideoTransCtrler::VideoTransCtrler()
+{
+    runCount = 0;
+}
+
+VideoTransCtrler::~VideoTransCtrler()
+{
+}
+
+void VideoTransCtrler::packetReact(VideoTransPacket& pkt)
+{
+    NodeConfig& config = NodeConfig::getInstance();
+    DsrRouteGetter routeGetter;
+
+    in_addr_t myIP = config.getMyIP();
+    in_addr_t nextHopIP = 0;
+    VideoTransPacket pktToSend(pkt);
+
+    cout << "\n\n*************** pkt original **********************";
+    pkt.printPktInfo();
+
+    cout << "\n\n*************** pktToSend original **********************";
+    pktToSend.printPktInfo();
+
+    switch (pkt.getCmd()) {
+    case VideoTransCmd::start: {
+        try {
+            if (pkt.getCapturer() == myIP) {
+                nextHopIP = routeGetter.getNextHop(pkt.getRequester(), 3, CHECK_TABLE_FIRST);
+                pktToSend.setCmd(VideoTransCmd::ready);
+            } else {
+                nextHopIP = routeGetter.getNextHop(pkt.getCapturer(), 3, CHECK_TABLE_FIRST);
+            }
+        } catch (const char* msg) {
+            if (strcmp(msg, "DestinationUnreachable") == 0) {
+                cerr << __func__ << "Fail to find route!\n";
+                // pkt.printPktInfo(); todo
+                break;
+            }
+        }
+
+        pktToSend.setSrc(myIP);
+        pktToSend.setDst(nextHopIP);
+
+        cout << "\n\n*************** Packet to send **********************";
+        pktToSend.printPktInfo();
+
+        // 等待本地推流初始化完成后，再发出ready包
+        if (pktToSend.getCmd() == VideoTransCmd::ready) {
+            char localVideoUrl[VS_URL_MAX_LEN];
+            memset(localVideoUrl, 0, VS_URL_MAX_LEN);
+            generateUrl(myIP, myIP, localVideoUrl);
+            while (findInPubList(localVideoUrl) == false) {
+                cout << "Local video stream is not ready yet, waiting...\n";
+                sleep_for(seconds(1));
+            }
+        }
+
+        std::unique_lock<std::mutex> lock(packetSendQueue.mtx);
+        packetSendQueue.q.push(pktToSend);
+        cout << "[Recved start packet] VT Packet pushed into queue!\n";
+        packetSendQueue.cond.notify_all();
+        break;
+    }
+
+    case VideoTransCmd::ready: {
+        addRelayer(pkt.getCapturer(), pkt.getSrc());
+
+        if (pkt.getRequester() != myIP) {
+            try {
+                nextHopIP = routeGetter.getNextHop(pkt.getRequester(), 3, CHECK_TABLE_FIRST);
+            } catch (const char* msg) {
+                if (strcmp(msg, "DestinationUnreachable") == 0) {
+                    cerr << __func__ << "Fail to find route!\n";
+                    // pkt.printPktInfo(); todo
+                    break;
+                }
+            }
+
+            // TODO: 此处的流程可以再优化以下，会造成重复生成URL的问题
+            // 等待推流中继初始化完成后，再发出ready包
+            char republishUrl[VS_URL_MAX_LEN];
+            memset(republishUrl, 0, VS_URL_MAX_LEN);
+            generateUrl(pkt.getCapturer(), myIP, republishUrl);
+            while (findInPubList(republishUrl) == false) {
+                cout << "Relayed video stream is not ready yet, waiting...\n";
+                sleep_for(seconds(1));
+            }
+
+            pktToSend.setSrc(myIP);
+            pktToSend.setDst(nextHopIP);
+            std::unique_lock<std::mutex> lock(packetSendQueue.mtx);
+            packetSendQueue.q.push(pktToSend);
+            cout << "[Recved ready packet] VT Packet pushed into queue!\n";
+            packetSendQueue.cond.notify_all();
+        }
+        break;
+    }
+
+    case VideoTransCmd::stop: {
+        if (pkt.getCapturer() == config.getMyIP()) {
+            break;
+        }
+
+        deleteRelayer(pkt.getCapturer());
+
+        try {
+            nextHopIP = routeGetter.getNextHop(pkt.getRequester(), 3, CHECK_TABLE_FIRST);
+        } catch (const char* msg) {
+            if (strcmp(msg, "DestinationUnreachable") == 0) {
+                cerr << __func__ << "Fail to find route!\n";
+                // pkt.printPktInfo(); todo
+                break;
+            }
+        }
+
+        if (nextHopIP != pkt.getCapturer()) {
+            pktToSend.setSrc(myIP);
+            pktToSend.setDst(nextHopIP);
+            std::unique_lock<std::mutex> lock(packetSendQueue.mtx);
+            packetSendQueue.q.push(pktToSend);
+            packetSendQueue.cond.notify_all();
+        }
+        break;
+    }
+
+    case VideoTransCmd::lost: {
+        // TODO
+        break;
+    }
+
+    default:
+        break;
+    }
+}
+
+void VideoTransCtrler::addRelayer(in_addr_t capturerIP, in_addr_t pullIP)
+{
+    auto it = relayerList.find(capturerIP);
+    if (it != relayerList.end()) {
+        char ip_s[INET_ADDRSTRLEN];
+        memset(ip_s, 0, INET_ADDRSTRLEN);
+        inet_ntop(AF_INET, &capturerIP, ip_s, INET_ADDRSTRLEN);
+        cout << "Relayer pulling stream from " << ip_s << " already exist!\n";
+        return;
+    }
+
+    char pullUrl[VS_URL_MAX_LEN];
+    char republishUrl[VS_URL_MAX_LEN];
+    VideoRelayer* pRelayer = nullptr;
+    NodeConfig& config = NodeConfig::getInstance();
+    in_addr_t myIP = config.getMyIP();
+
+    memset(pullUrl, 0, VS_URL_MAX_LEN);
+    memset(republishUrl, 0, VS_URL_MAX_LEN);
+
+    generateUrl(capturerIP, pullIP, pullUrl);
+    if (config.getNodeType() == NodeType::sink) {
+        generateUrl(capturerIP, config.getSinkIP2Ctrler(), republishUrl);
+    } else {
+        generateUrl(capturerIP, myIP, republishUrl);
+    }
+
+    pRelayer = new VideoRelayer(pullUrl, republishUrl);
+    relayerList.insert({ capturerIP, pRelayer });
+    std::thread relayerThread(&VideoRelayer::run, pRelayer);
+    relayerThread.detach();
+}
+
+void VideoTransCtrler::deleteRelayer(in_addr_t capturerIP)
+{
+    auto it = relayerList.find(capturerIP);
+    if (it == relayerList.end()) {
+        char ip_s[INET_ADDRSTRLEN];
+        memset(ip_s, 0, INET_ADDRSTRLEN);
+        inet_ntop(AF_INET, &capturerIP, ip_s, INET_ADDRSTRLEN);
+        cout << "No relayer is pulling stream from " << ip_s << " , nothing deleted!\n";
+        return;
+    }
+
+    VideoRelayer* pRelayer = it->second;
+    pRelayer->stop();
+    relayerList.erase(it);
+}
+
+
+
+void VideoTransCtrler::run()
+{
+    if (runCount == 0) {
+        runCount++;
+    } else {
+        cout << "VideoTransCtrler thread exited: a thread is already running.\n";
+        return;
+    }
+
+    std::atomic<bool> handlerStopFlag(false);
+    NodeConfig& config = NodeConfig::getInstance();
+    in_addr_t myIP = config.getMyIP();
+
+    auto packetHandler = [&]() {
+        while (handlerStopFlag == false) {
+            std::unique_lock<std::mutex> lock(packetRecvQueue.mtx);
+            while (handlerStopFlag == false && packetRecvQueue.q.empty()) {
+                packetRecvQueue.cond.wait(lock);
+            }
+
+            lock.unlock();
+            sleep_for(microseconds(500));
+
+            while (!packetRecvQueue.q.empty()) {
+                lock.lock();
+                VideoTransPacket pkt = packetRecvQueue.q.front();
+                // pkt.printPktInfo();
+                packetRecvQueue.q.pop();
+                lock.unlock();
+
+                packetReact(pkt);
+
+                // auto packetReactThread = [&]() {
+                //     packetReact(pkt);
+                // };
+                // std::thread th(packetReactThread);
+                // th.detach();
+            }
+        }
+    };
+
+    // Just for debug
+    auto videoRequester = [&]() {
+        in_addr_t nodeIP, nextHopIP;
+        DsrRouteGetter routeGetter;
+        char nodeIPList[][INET_ADDRSTRLEN] = { "192.168.2.101", "192.168.2.104", "192.168.2.105" };
+
+        sleep_for(seconds(3));
+
+        for (char* ip_s : nodeIPList) {
+            inet_pton(AF_INET, ip_s, &nodeIP);
+            try {
+                nextHopIP = routeGetter.getNextHop(nodeIP, 3, CHECK_TABLE_FIRST);
+            } catch (const char* msg) {
+                if (strcmp(msg, "DestinationUnreachable") == 0) {
+                    cerr << "Fail to find route to " << ip_s <<"\n";
+                    continue;
+                }
+            }
+            VideoTransPacket pkt(VideoTransCmd::start, myIP, nextHopIP, myIP, nodeIP);
+            std::unique_lock<std::mutex> lock(packetSendQueue.mtx);
+            packetSendQueue.q.push(pkt);
+            packetSendQueue.cond.notify_all();
+        }
+
+        sleep_for(seconds(120));
+
+        for (char* ip_s : nodeIPList) {
+            inet_pton(AF_INET, ip_s, &nodeIP);
+            try {
+                nextHopIP = routeGetter.getNextHop(nodeIP, 3, CHECK_TABLE_FIRST);
+            } catch (const char* msg) {
+                if (strcmp(msg, "DestinationUnreachable") == 0) {
+                    cerr << "Fail to find route to " << ip_s <<"\n";
+                    continue;
+                }
+            }
+            VideoTransPacket pkt(VideoTransCmd::stop, myIP, nextHopIP, myIP, nodeIP);
+            std::unique_lock<std::mutex> lock(packetSendQueue.mtx);
+            packetSendQueue.q.push(pkt);
+            packetSendQueue.cond.notify_all();
+        }
+    };
+
+    std::thread packetListenerThread(&PacketListener::run, &packetListener);
+    std::thread packetSenderThread(&PacketSender::run, &packetSender);
+    std::thread packetHandlerThread(packetHandler);
+
+    if (config.getNodeType() == NodeType::sink) {
+        std::thread videoRequesterThread(videoRequester);
+        videoRequesterThread.detach();
+    }
+
+    while (stopRequested() == false) {
+        sleep_for(seconds(1));
+    }
+
+    handlerStopFlag = true;
+    packetRecvQueue.cond.notify_all();
+    packetSendQueue.cond.notify_all();
+    packetSender.stop();
+    packetListener.stop();
+
+    for (auto it = relayerList.begin(); it != relayerList.end(); it++) {
+        it->second->stop();
+    }
+
+    packetHandlerThread.join();
+    packetSenderThread.join();
+    packetListenerThread.join();
+
+    runCount--;
+    cout << "VideoTransCtrler::run() exit!\n";
+}
+
+void generateUrl(in_addr_t capturerIP, in_addr_t publishIP, char urlBuf[])
+{
+    char ipAddr_s[INET_ADDRSTRLEN];
+    char twoDigit[3];
+    char num;
+
+    memset(ipAddr_s, 0, INET_ADDRSTRLEN);
+    memset(twoDigit, 0, 3);
+
+    inet_ntop(AF_INET, &publishIP, ipAddr_s, INET_ADDRSTRLEN);
+
+    if (__BYTE_ORDER == __LITTLE_ENDIAN) {
+        num = (char)((capturerIP & 0xFF000000) >> 24);
+    } else if (__BYTE_ORDER == __BIG_ENDIAN) {
+        num = (char)(capturerIP & 0x000000FF);
+    }
+    twoDigit[1] = '0' + num % 10;
+    num = num / 10;
+    twoDigit[0] = '0' + num % 10;
+
+    sprintf(urlBuf, "rtsp://%s:%d/vs%s", ipAddr_s, PORT_VIDEO, twoDigit);
 }

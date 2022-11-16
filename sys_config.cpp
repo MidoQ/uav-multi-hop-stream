@@ -11,10 +11,12 @@ NodeConfig::NodeConfig()
     myIP = 0;
     sinkNodeIP = 0;
     controllerIP = 0;
+    sinkIP2Ctrler = 0;
     strcpy(myIP_s, "000.000.000.000");
     strcpy(sinkNodeIP_s, "000.000.000.000");
     strcpy(broadcast_IP_s, "192.168.2.255");
     strcpy(controllerIP_s, "000.000.000.000");
+    strcpy(sinkIP2Ctrler_s, "192.168.15.000");
 
     in_addr tmp;
     inet_pton(AF_INET, broadcast_IP_s, &tmp);
@@ -71,11 +73,12 @@ int NodeConfig::loadConfigFromFile(const char config_filename[])
     inet_pton(AF_INET, sinkNodeIP_s, &tmp);
     sinkNodeIP = tmp.s_addr;
 
-    inet_pton(AF_INET, controllerIP_s, &tmp);
-    controllerIP = tmp.s_addr;
-
     if (myIP == sinkNodeIP) {
         nodeType = NodeType::sink;
+        inet_pton(AF_INET, controllerIP_s, &tmp);
+        controllerIP = tmp.s_addr;
+        inet_pton(AF_INET, sinkIP2Ctrler_s, &tmp);
+        sinkIP2Ctrler = tmp.s_addr;
     } else {
         nodeType = NodeType::common;
     }
@@ -91,6 +94,7 @@ void NodeConfig::initParamMap()
     paramMap["myIP_s"] = 2;
     paramMap["sinkNodeIP_s"] = 3;
     paramMap["controllerIP_s"] = 4;
+    paramMap["sinkIP2Ctrler_s"] = 5;
 }
 
 void NodeConfig::assignParam(std::string& paramName, std::string& paramVal)
@@ -120,6 +124,10 @@ void NodeConfig::assignParam(std::string& paramName, std::string& paramVal)
     case 4:
         memcpy(controllerIP_s, paramVal.c_str(), paramVal.size());
         controllerIP_s[paramVal.size()] = 0;
+        break;
+    case 5:
+        memcpy(sinkIP2Ctrler_s, paramVal.c_str(), paramVal.size());
+        sinkIP2Ctrler_s[paramVal.size()] = 0;
         break;
     default:
         break;

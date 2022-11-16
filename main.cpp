@@ -56,7 +56,8 @@ int main(int argc, char* argv[])
     NeighborReporter& neibReporter = NeighborReporter::getInstance();
     SdnReporter& sdnReporter = SdnReporter::getInstance();
     SdnListener& sdnListener = SdnListener::getInstance();
-    // VideoPublisher& videoPublisher = VideoPublisher::getInstance();
+    VideoPublisher& videoPublisher = VideoPublisher::getInstance();
+    VideoTransCtrler& videoTransCtrler = VideoTransCtrler::getInstance();
 
     // 路由发现
     std::thread routeListenerThread(&DsrRouteListener::run, &routeListener);
@@ -80,6 +81,42 @@ int main(int argc, char* argv[])
     std::thread neibReporterThread(&NeighborReporter::run, &neibReporter);
     addToStopList(neibReporter, neibReporterThread);
 
+#ifdef DEBUG_PRINT_TOPO
+    // Just for debug
+    auto printNeibMatrix = [&]() {
+        while (exitFlag == false) {
+            sleep_for(seconds(5));
+
+            std::vector<in_addr_t> nodeList;
+            std::vector<std::vector<char>> mat;
+            topo.toMatrix(nodeList, mat);
+
+            for (size_t i = 0; i < nodeList.size(); ++i) {
+                // uint32_t nodeId = (0xFF000000 & nodeList[i]) >> 24;
+                uint32_t nodeId = nodeList[i] >> 24;
+                cout << '\t' << std::dec << nodeId;
+            }
+            cout << '\n';
+
+            for (size_t i = 0; i < mat.size(); ++i) {
+                // uint32_t nodeId = (0xFF000000 & nodeList[i]) >> 24;
+                uint32_t nodeId = nodeList[i] >> 24;
+                cout << nodeId << '\t';
+                for (size_t j = 0; j < mat[i].size(); ++j) {
+                    cout << (int)mat[i][j] << '\t';
+                }
+                cout << '\n';
+            }
+            cout << endl;
+        }
+    };
+
+    if (nodeConfig.getNodeType() == NodeType::sink) {
+        std::thread matPrinterThread(printNeibMatrix);
+        matPrinterThread.detach();
+    }
+#endif
+
     // SDN 汇报与命令接收
     if (nodeConfig.getNodeType() == NodeType::sink) {
         static std::thread sdnReporterThread(&SdnReporter::run, &sdnReporter);
@@ -90,8 +127,19 @@ int main(int argc, char* argv[])
     }
 
     // 视频流
-    // std::thread videoPublisherThread(&VideoPublisher::run, &videoPublisher);
-    // addToStopList(videoPublisher, videoPublisherThread);
+    char publishUrl[VS_URL_MAX_LEN];
+    memset(publishUrl, 0, VS_URL_MAX_LEN);
+    if (nodeConfig.getNodeType() == NodeType::sink) {
+        generateUrl(nodeConfig.getMyIP(), nodeConfig.getSinkIP2Ctrler(), publishUrl);
+    } else {
+        generateUrl(nodeConfig.getMyIP(), nodeConfig.getMyIP(), publishUrl);
+    }
+    videoPublisher.setIOName("/dev/video0", publishUrl);
+    std::thread videoPublisherThread(&VideoPublisher::run, &videoPublisher);
+    addToStopList(videoPublisher, videoPublisherThread);
+
+    std::thread videoTransCtrlerThread(&VideoTransCtrler::run, &videoTransCtrler);
+    addToStopList(videoTransCtrler, videoTransCtrlerThread);
 
     // 在捕获到SIGINT之前，永久挂起主线程
     std::unique_lock<std::mutex> lock(mtx4Exit);

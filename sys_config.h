@@ -22,10 +22,12 @@ private:
     in_addr_t sinkNodeIP;
     in_addr_t broadcast_IP;
     in_addr_t controllerIP;
+    in_addr_t sinkIP2Ctrler;
     char myIP_s[INET_ADDRSTRLEN];
     char sinkNodeIP_s[INET_ADDRSTRLEN];
     char broadcast_IP_s[INET_ADDRSTRLEN];
     char controllerIP_s[INET_ADDRSTRLEN];
+    char sinkIP2Ctrler_s[INET_ADDRSTRLEN];
     std::unordered_map<std::string, int> paramMap;
 
 private:
@@ -89,6 +91,14 @@ public:
 
     void getControllerIP_s(char* destbuf) {
         memcpy(destbuf, controllerIP_s, INET_ADDRSTRLEN);
+    }
+
+    in_addr_t getSinkIP2Ctrler() {
+        return sinkIP2Ctrler;
+    }
+
+    void getSinkIP2Ctrler_s(char* destbuf) {
+        memcpy(destbuf, sinkIP2Ctrler_s, INET_ADDRSTRLEN);
     }
 
     void printNodeConfig();
