@@ -172,11 +172,12 @@ private:
     bool firstPtsIsSet = false;
     bool ioIsSet = false;
     int64_t firstPts = 0, firstDts = 0;
-    AVOutputFormat* ofmt = NULL;
-    AVFormatContext *ifmtCtx = NULL, *ofmtCtx = NULL;
-    AVPacket pkt;
-    AVCodec *pInCodec, *pOutCodec;
-    AVCodecContext *pInCodecCtx, *pOutCodecCtx;
+    // AVOutputFormat* ofmt = nullptr;
+    AVFormatContext *ifmtCtx = nullptr, *ofmtCtx = nullptr;
+    // AVPacket pkt;
+    AVPacket* pPkt = nullptr;
+    // AVCodec *pInCodec, *pOutCodec;
+    // AVCodecContext *pInCodecCtx, *pOutCodecCtx;
 
     char inFilename[256] = { 0 };
     char outFilename[256] = { 0 };

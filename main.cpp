@@ -28,7 +28,7 @@ std::condition_variable cond4Exit;
 
 /* 函数声明 */
 
-void signalHandler(int signum);
+// void signalHandler(int signum);
 
 void addToStopList(Stoppable& threadObj, std::thread& thd);
 
@@ -40,7 +40,7 @@ int main(int argc, char* argv[])
 {
     printLogo();
 
-    signal(SIGINT, signalHandler);
+    // signal(SIGINT, signalHandler);
 
     // 节点配置初始化
     NodeConfig& nodeConfig = NodeConfig::getInstance();
@@ -142,9 +142,20 @@ int main(int argc, char* argv[])
     addToStopList(videoTransCtrler, videoTransCtrlerThread);
 
     // 在捕获到SIGINT之前，永久挂起主线程
-    std::unique_lock<std::mutex> lock(mtx4Exit);
-    while (!exitFlag) {
-        cond4Exit.wait(lock);
+    // std::unique_lock<std::mutex> lock(mtx4Exit);
+    // while (!exitFlag) {
+    //     cond4Exit.wait(lock);
+    // }
+
+    char keyboardIn[256];
+    memset(keyboardIn, 0, 256);
+    while (keyboardIn[0] != 'q' && keyboardIn[0] != 'Q') {
+        std::cin.getline(keyboardIn, 256);
+    }
+
+    // 退出所有子线程
+    for (size_t i = 0; i < threadCount; i++) {
+        pStoppableList[i]->stop();
     }
 
     // 等待所有子线程结束
@@ -160,21 +171,21 @@ int main(int argc, char* argv[])
 
 /* 函数定义 */
 
-void signalHandler(int signum)
-{
-    cout << "\nIntterupt by Ctrl+C. Shutting down gracefully...\n";
+// void signalHandler(int signum)
+// {
+//     cout << "\nIntterupt by Ctrl+C. Shutting down gracefully...\n";
 
-    if (signum == SIGINT) {
-        // 退出所有子线程
-        for (size_t i = 0; i < threadCount; i++) {
-            pStoppableList[i]->stop();
-        }
-        // 退出主线程
-        std::unique_lock<std::mutex> lock(mtx4Exit);
-        exitFlag = true;
-        cond4Exit.notify_all();
-    }
-}
+    // if (signum == SIGINT) {
+    //     // 退出所有子线程
+    //     for (size_t i = 0; i < threadCount; i++) {
+    //         pStoppableList[i]->stop();
+    //     }
+    //     // 退出主线程
+    //     std::unique_lock<std::mutex> lock(mtx4Exit);
+    //     exitFlag = true;
+    //     cond4Exit.notify_all();
+    // }
+// }
 
 void addToStopList(Stoppable& threadObj, std::thread& thd)
 {

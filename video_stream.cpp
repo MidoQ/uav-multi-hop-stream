@@ -15,7 +15,12 @@ static void eraseFromPubList(char* publishUrl)
 {
     cout << "Erasing publishUrl: " << publishUrl << '\n';
     std::unique_lock<std::mutex> lock(mtx4pubList);
-    publishingList.erase(std::string(publishUrl));
+    auto it = publishingList.find(std::string(publishUrl));
+    if (it != publishingList.end()) {
+        publishingList.erase(it);
+    } else {
+        cout << "URL [" << publishUrl << "] NOT found in publishingList.\n";
+    }
     lock.unlock();
 }
 
@@ -588,35 +593,35 @@ void VideoPublisher::run()
     ifmtCtx = openInputCtx(inFilename);
     if (!ifmtCtx) {
         cerr << "Fail to open input format context!\n";
-        goto end;
+        goto PUBLISHER_END;
     }
 
     // 查找视频流在上下文中的序号
     vsIndex = findVideoStreamIndex(ifmtCtx);
     if (vsIndex < 0) {
         cerr << "No video stream in INPUT!\n";
-        goto end;
+        goto PUBLISHER_END;
     }
 
     // 打开输入解码器
     pRawCodecCtx = openInputCodecCtx(ifmtCtx);
     if (!pRawCodecCtx) {
         cerr << "Fail to open input codec context!\n";
-        goto end;
+        goto PUBLISHER_END;
     }
 
     // 打开 H264 编码器
     pH264CodecCtx = openH264CodexCtx(AV_PIX_FMT_YUV420P, pRawCodecCtx->width, pRawCodecCtx->height, H264FPS);
     if (!pH264CodecCtx) {
         cerr << "Fail to open H264 codec context!\n";
-        goto end;
+        goto PUBLISHER_END;
     }
 
     // 打开输出上下文
     ofmtCtx = openOutputCtx(outFilename, ifmtCtx, pH264CodecCtx);
     if (!ofmtCtx) {
         cerr << "Fail to open output format context!\n";
-        goto end;
+        goto PUBLISHER_END;
     }
 
     // 分配缓存空间
@@ -631,14 +636,14 @@ void VideoPublisher::run()
     ret = av_frame_get_buffer(pFrameCopy, 16);
     if (ret != 0) {
         cerr << "pFrameCopy->data buffer init Failed!\n";
-        goto end;
+        goto PUBLISHER_END;
     }
 
     ret = av_image_alloc(pFrameYUV->data, pFrameYUV->linesize,
                    pH264CodecCtx->width, pH264CodecCtx->height, pH264CodecCtx->pix_fmt, 1);
     if (ret < 0) {
         cerr << "Fail to allocate memory for pFrameYUV->data\n";
-        goto end;
+        goto PUBLISHER_END;
     } else {
         cout << "Allocate memory for pFrameYUV->data: " << ret << " bytes.\n";
     }
@@ -739,7 +744,7 @@ void VideoPublisher::run()
     }
     // av_write_trailer(ofmtCtx);
 
-end:
+PUBLISHER_END:
     eraseFromPubList(outFilename);
 
     avformat_close_input(&ifmtCtx);
@@ -756,7 +761,7 @@ end:
     if (ofmtCtx && !(ofmtCtx->oformat->flags & AVFMT_NOFILE)) {
         avio_closep(&ofmtCtx->pb);
     }
-    // avformat_free_context(ofmtCtx);   // 调用该函数会内存错误，原因不详
+    avformat_free_context(ofmtCtx);   // 调用该函数会内存错误，原因不详
 
     if (ret < 0 && ret != AVERROR_EOF) {
         cerr << "Error occurred\n";
@@ -1011,10 +1016,12 @@ void VideoRelayer::run()
     AVBitStreamFilterContext* h264bsfc = av_bitstream_filter_init("h264_mp4toannexb");
 #endif
 
+    pPkt = av_packet_alloc();
+
     // 丢弃最初的3帧
     for (int i = 0; i < 3; i++) {
-        ret = av_read_frame(ifmtCtx, &pkt);
-        av_packet_unref(&pkt);
+        ret = av_read_frame(ifmtCtx, pPkt);
+        av_packet_unref(pPkt);
     }
 
     // 加入已推流节点列表
@@ -1024,36 +1031,36 @@ void VideoRelayer::run()
     for (size_t i = 0; stopRequested() == false; i++) {
         AVStream *inStream, *outStream;
         // Get an AVPacket
-        ret = av_read_frame(ifmtCtx, &pkt);
+        ret = av_read_frame(ifmtCtx, pPkt);
         if (ret < 0)
             break;
 
         if (!firstPtsIsSet) {
-            firstPts = pkt.pts;
-            firstDts = pkt.dts;
+            firstPts = pPkt->pts;
+            firstDts = pPkt->dts;
             firstPtsIsSet = true;
         }
 
-        inStream = ifmtCtx->streams[pkt.stream_index];
-        outStream = ofmtCtx->streams[pkt.stream_index];
+        inStream = ifmtCtx->streams[pPkt->stream_index];
+        outStream = ofmtCtx->streams[pPkt->stream_index];
 
         /* copy packet */
         // Convert PTS/DTS
-        pkt.pts -= firstPts;
-        pkt.dts -= firstDts;
-        av_packet_rescale_ts(&pkt, inStream->time_base, outStream->time_base);
-        pkt.pos = -1;
+        pPkt->pts -= firstPts;
+        pPkt->dts -= firstDts;
+        av_packet_rescale_ts(pPkt, inStream->time_base, outStream->time_base);
+        pPkt->pos = -1;
 
         // Print to Screen
-        if (pkt.stream_index == videoIndex) {
+        if (pPkt->stream_index == videoIndex) {
             frameIndex++;
 
             #if USE_H264BSF
-            av_bitstream_filter_filter(h264bsfc, inStream->codec, NULL, &pkt.data, &pkt.size, pkt.data, pkt.size, 0);
+            av_bitstream_filter_filter(h264bsfc, inStream->codec, NULL, pPkt->data, pPkt->size, pPkt->data, pPkt->size, 0);
             #endif
         }
 
-        ret = av_interleaved_write_frame(ofmtCtx, &pkt);
+        ret = av_interleaved_write_frame(ofmtCtx, pPkt);
         if (ret < 0) {
             av_make_error_string(errmsg, sizeof(errmsg), ret);
             cerr << "Relay packet failed: " << errmsg << '\n';
@@ -1065,7 +1072,7 @@ void VideoRelayer::run()
         }
         #endif
 
-        av_packet_unref(&pkt);
+        av_packet_unref(pPkt);
     }
 
 #if USE_H264BSF
@@ -1075,15 +1082,23 @@ void VideoRelayer::run()
     // Write file trailer
     // av_write_trailer(ofmtCtx);
 
-end:
+// end:
     eraseFromPubList(outFilename);
 
+    cout << "Freeing packet...\n";
+    av_packet_free(&pPkt);
+    av_free(pPkt);
+
+    cout << "Relayer input " << inFilename << " closing...\n";
     avformat_close_input(&ifmtCtx);
+    cout << "Relayer input closed!\n";
 
     /* close output */
-    if (ofmtCtx && !(ofmt->flags & AVFMT_NOFILE))
-        avio_close(ofmtCtx->pb);
-    // avformat_free_context(ofmtCtx);
+    if (ofmtCtx && !(ofmtCtx->oformat->flags & AVFMT_NOFILE)) {
+        cout << "Closing output...\n";
+        avio_closep(&ofmtCtx->pb);
+    }
+    avformat_free_context(ofmtCtx);
 
     if (ret < 0 && ret != AVERROR_EOF) {
         cerr << "Error occurred.\n";
@@ -1113,9 +1128,6 @@ void VideoTransCtrler::packetReact(VideoTransPacket& pkt)
     in_addr_t myIP = config.getMyIP();
     in_addr_t nextHopIP = 0;
     VideoTransPacket pktToSend(pkt);
-
-    cout << "\n\n*************** pkt original **********************";
-    pkt.printPktInfo();
 
     cout << "\n\n*************** pktToSend original **********************";
     pktToSend.printPktInfo();
@@ -1175,6 +1187,9 @@ void VideoTransCtrler::packetReact(VideoTransPacket& pkt)
                 }
             }
 
+            pktToSend.setSrc(myIP);
+            pktToSend.setDst(nextHopIP);
+
             // TODO: 此处的流程可以再优化以下，会造成重复生成URL的问题
             // 等待推流中继初始化完成后，再发出ready包
             char republishUrl[VS_URL_MAX_LEN];
@@ -1185,8 +1200,9 @@ void VideoTransCtrler::packetReact(VideoTransPacket& pkt)
                 sleep_for(seconds(1));
             }
 
-            pktToSend.setSrc(myIP);
-            pktToSend.setDst(nextHopIP);
+            cout << "\n\n*************** Packet to send **********************";
+            pktToSend.printPktInfo();
+
             std::unique_lock<std::mutex> lock(packetSendQueue.mtx);
             packetSendQueue.q.push(pktToSend);
             cout << "[Recved ready packet] VT Packet pushed into queue!\n";
@@ -1203,7 +1219,7 @@ void VideoTransCtrler::packetReact(VideoTransPacket& pkt)
         deleteRelayer(pkt.getCapturer());
 
         try {
-            nextHopIP = routeGetter.getNextHop(pkt.getRequester(), 3, CHECK_TABLE_FIRST);
+            nextHopIP = routeGetter.getNextHop(pkt.getCapturer(), 3, CHECK_TABLE_FIRST);
         } catch (const char* msg) {
             if (strcmp(msg, "DestinationUnreachable") == 0) {
                 cerr << __func__ << "Fail to find route!\n";
@@ -1215,8 +1231,22 @@ void VideoTransCtrler::packetReact(VideoTransPacket& pkt)
         if (nextHopIP != pkt.getCapturer()) {
             pktToSend.setSrc(myIP);
             pktToSend.setDst(nextHopIP);
+
+            cout << "\n\n*************** Packet to send **********************";
+            pktToSend.printPktInfo();
+
+            // 等待本地推流中继退出后，再继续发送stop包
+            char localVideoUrl[VS_URL_MAX_LEN];
+            memset(localVideoUrl, 0, VS_URL_MAX_LEN);
+            generateUrl(pkt.getCapturer(), myIP, localVideoUrl);
+            while (findInPubList(localVideoUrl) == true) {
+                cout << "Local video stream is still running, waiting...\n";
+                sleep_for(seconds(1));
+            }
+
             std::unique_lock<std::mutex> lock(packetSendQueue.mtx);
             packetSendQueue.q.push(pktToSend);
+            cout << "[Stop packet] VT Packet pushed into send queue!\n";
             packetSendQueue.cond.notify_all();
         }
         break;
@@ -1278,10 +1308,11 @@ void VideoTransCtrler::deleteRelayer(in_addr_t capturerIP)
 
     VideoRelayer* pRelayer = it->second;
     pRelayer->stop();
+    sleep_for(milliseconds(20));
+    cout << "Deleting Relayer...\n";
+    delete pRelayer;
     relayerList.erase(it);
 }
-
-
 
 void VideoTransCtrler::run()
 {
@@ -1313,6 +1344,7 @@ void VideoTransCtrler::run()
                 packetRecvQueue.q.pop();
                 lock.unlock();
 
+                // TODO 此处可以优化，因为等待某个节点准备好时，可能阻塞后面的packet的处理
                 packetReact(pkt);
 
                 // auto packetReactThread = [&]() {
@@ -1328,7 +1360,7 @@ void VideoTransCtrler::run()
     auto videoRequester = [&]() {
         in_addr_t nodeIP, nextHopIP;
         DsrRouteGetter routeGetter;
-        char nodeIPList[][INET_ADDRSTRLEN] = { "192.168.2.101", "192.168.2.104", "192.168.2.105" };
+        char nodeIPList[][INET_ADDRSTRLEN] = { "192.168.2.101", "192.168.2.103", "192.168.2.104", "192.168.2.105" };
 
         sleep_for(seconds(3));
 
@@ -1348,7 +1380,7 @@ void VideoTransCtrler::run()
             packetSendQueue.cond.notify_all();
         }
 
-        sleep_for(seconds(120));
+        sleep_for(seconds(30));
 
         for (char* ip_s : nodeIPList) {
             inet_pton(AF_INET, ip_s, &nodeIP);
@@ -1360,6 +1392,16 @@ void VideoTransCtrler::run()
                     continue;
                 }
             }
+
+            char publishUrl[VS_URL_MAX_LEN];
+            memset(publishUrl, 0, VS_URL_MAX_LEN);
+            generateUrl(nodeIP, myIP, publishUrl);
+
+            while (findInPubList(publishUrl)) {
+                cout << "Relayer still running, waiting...\n";
+                sleep_for(seconds(1));
+            }
+
             VideoTransPacket pkt(VideoTransCmd::stop, myIP, nextHopIP, myIP, nodeIP);
             std::unique_lock<std::mutex> lock(packetSendQueue.mtx);
             packetSendQueue.q.push(pkt);
@@ -1380,14 +1422,33 @@ void VideoTransCtrler::run()
         sleep_for(seconds(1));
     }
 
+    while (!packetRecvQueue.q.empty()) {
+        cout << "Some recved packets needs to be handled, waiting...\n";
+        sleep_for(seconds(1));
+    }
+
+    while (!packetSendQueue.q.empty()) {
+        cout << "Some packets needs to be send, waiting...\n";
+        sleep_for(seconds(1));
+    }
+
     handlerStopFlag = true;
     packetRecvQueue.cond.notify_all();
     packetSendQueue.cond.notify_all();
     packetSender.stop();
     packetListener.stop();
 
-    for (auto it = relayerList.begin(); it != relayerList.end(); it++) {
-        it->second->stop();
+    // for (auto it = relayerList.begin(); it != relayerList.end(); it++) {
+    //     it->second->stop();
+    // }
+
+    char url[VS_URL_MAX_LEN];
+    while (!relayerList.empty()) {
+        in_addr_t capturerIP = relayerList.begin()->first;
+        deleteRelayer(capturerIP);
+        memset(url, 0, VS_URL_MAX_LEN);
+        generateUrl(capturerIP, myIP, url);
+        eraseFromPubList(url);
     }
 
     packetHandlerThread.join();
