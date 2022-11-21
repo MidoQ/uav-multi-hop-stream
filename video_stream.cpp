@@ -15,7 +15,7 @@ public:
         isEmpty = true;
     }
 
-    ~PublishingList();
+    ~PublishingList() {}
 
     bool empty() { return isEmpty; }
 
@@ -121,31 +121,25 @@ private:
     std::queue<VideoTransPacket> q;
 
 private:
-    void sendVTPakcet(VideoTransPacket& pkt)
+    void sendVTPakcet(VideoTransPacket& pkt);
+
+    VideoTransPacket pop();
+
+public:
+    PacketSendQueue()
     {
-        memset(sendBuf, 0, VT_PKT_MAX_LEN);
-        sendLen = pkt.serializeToBuf(sendBuf);
-
-        send_addr.sin_family = AF_INET;
-        send_addr.sin_addr.s_addr = pkt.getDst();
-        send_addr.sin_port = hton16(PORT_VIDEO_TRANS_PKT);
-
-        sendto(send_sock, sendBuf, sendLen, 0, (struct sockaddr*)&send_addr, sizeof(send_addr));
+        runCount = 0;
+        isEmpty = true;
     }
 
-    VideoTransPacket pop()
+    ~PacketSendQueue() {}
+
+    bool empty() { return isEmpty; }
+
+    void stop()
     {
-        if (isEmpty) {
-            throw("EmptyQueue");
-        }
-        std::unique_lock<std::mutex> lock(mtx);
-        VideoTransPacket pkt = q.front();
-        q.pop();
-        if (q.empty()) {
-            isEmpty = true;
-        }
-        lock.unlock();
-        return pkt;
+        exitSignal.set_value();
+        cond.notify_all();
     }
 
     void waitForPacket()
@@ -156,63 +150,75 @@ private:
         }
     }
 
-public:
-    PacketSendQueue()
-    {
-        runCount = 0;
-        isEmpty = true;
-    }
+    void push(VideoTransPacket& pkt);
 
-    ~PacketSendQueue()
-    {
-    }
-
-    bool empty() { return isEmpty; }
-
-    void push(VideoTransPacket& pkt)
-    {
-        std::unique_lock<std::mutex> lock(mtx);
-        q.push(pkt);
-        isEmpty = false;
-        cond.notify_all();
-        lock.unlock();
-    }
-
-    void stop()
-    {
-        exitSignal.set_value();
-        cond.notify_all();
-    }
-
-    void run()
-    {
-        if (runCount == 0) {
-            runCount++;
-        } else {
-            cout << "PacketSendQueue thread exited: a thread is already running.\n";
-            return;
-        }
-
-        memset(sendBuf, 0, VT_PKT_MAX_LEN);
-
-        send_sock = socket(PF_INET, SOCK_DGRAM, 0);
-
-        while (stopRequested() == false) {
-            waitForPacket();
-
-            while (!isEmpty) {
-                VideoTransPacket pkt = pop();
-                cout << "\n\n*************** Packet to send **********************";
-                pkt.printPktInfo();
-                sendVTPakcet(pkt);
-            }
-        }
-
-        runCount--;
-        cout << "PacketSendQueue::run() exit!\n";
-    }
+    void run();
 
 } packetSendQueue;
+
+void PacketSendQueue::sendVTPakcet(VideoTransPacket& pkt)
+{
+    memset(sendBuf, 0, VT_PKT_MAX_LEN);
+    sendLen = pkt.serializeToBuf(sendBuf);
+
+    send_addr.sin_family = AF_INET;
+    send_addr.sin_addr.s_addr = pkt.getDst();
+    send_addr.sin_port = hton16(PORT_VIDEO_TRANS_PKT);
+
+    sendto(send_sock, sendBuf, sendLen, 0, (struct sockaddr*)&send_addr, sizeof(send_addr));
+}
+
+VideoTransPacket PacketSendQueue::pop()
+{
+    if (isEmpty) {
+        throw("EmptyQueue");
+    }
+    std::unique_lock<std::mutex> lock(mtx);
+    VideoTransPacket pkt = q.front();
+    q.pop();
+    if (q.empty()) {
+        isEmpty = true;
+    }
+    lock.unlock();
+    return pkt;
+}
+
+void PacketSendQueue::push(VideoTransPacket& pkt)
+{
+    std::unique_lock<std::mutex> lock(mtx);
+    q.push(pkt);
+    isEmpty = false;
+    cond.notify_all();
+    lock.unlock();
+}
+
+void PacketSendQueue::run()
+{
+    if (runCount == 0) {
+        runCount++;
+    } else {
+        cout << "PacketSendQueue thread exited: a thread is already running.\n";
+        return;
+    }
+
+    memset(sendBuf, 0, VT_PKT_MAX_LEN);
+
+    send_sock = socket(PF_INET, SOCK_DGRAM, 0);
+
+    while (stopRequested() == false) {
+        waitForPacket();
+
+        while (!isEmpty) {
+            VideoTransPacket pkt = pop();
+            cout << "\n\n*************** Packet to send **********************";
+            pkt.printPktInfo();
+            sendVTPakcet(pkt);
+        }
+    }
+
+    runCount--;
+    cout << "PacketSendQueue::run() exit!\n";
+}
 
 /* PacketRecvQueue */
 
@@ -226,14 +232,7 @@ private:
     std::queue<VideoTransPacket> q;
 
 private:
-    void push(VideoTransPacket& pkt)
-    {
-        std::unique_lock<std::mutex> lock(mtx);
-        q.push(pkt);
-        isEmpty = false;
-        cond.notify_all();
-        lock.unlock();
-    }
+    void push(VideoTransPacket& pkt);
 
 public:
     PacketRecvQueue()
@@ -259,89 +258,102 @@ public:
         return q.size();
     }
 
-    VideoTransPacket pop()
-    {
-        if (isEmpty) {
-            throw("EmptyQueue");
-        }
-        std::unique_lock<std::mutex> lock(mtx);
-        VideoTransPacket pkt = q.front();
-        q.pop();
-        if (q.empty()) {
-            isEmpty = true;
-        }
-        lock.unlock();
-        return pkt;
-    }
+    VideoTransPacket pop();
 
-    void run()
-    {
-        if (runCount == 0) {
-            runCount++;
-        } else {
-            cout << "PacketRecvQueue thread exited: a thread is already running.\n";
-            return;
-        }
-
-        int recv_sock;
-        int recvLen;
-        socklen_t recv_sock_len;
-        struct sockaddr_in recv_addr;
-        char recvBuf[VT_PKT_MAX_LEN];
-
-        memset(recvBuf, 0, VT_PKT_MAX_LEN);
-
-        // UDP接收套接字基本设置
-        recv_sock = socket(PF_INET, SOCK_DGRAM, 0);
-
-        struct timeval recvTimeout;     // recvfrom()的超时时间
-        recvTimeout.tv_sec = 3;
-        recvTimeout.tv_usec = 0;
-        if (setsockopt(recv_sock, SOL_SOCKET, SO_RCVTIMEO, &recvTimeout, sizeof(recvTimeout)) == -1) {
-            cerr << __func__ << "setsockopt() failed!\n";
-        }
-
-        memset(&recv_addr, 0, sizeof(recv_addr));
-        recv_addr.sin_family = AF_INET;
-        recv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-        recv_addr.sin_port = htons(PORT_VIDEO_TRANS_PKT);
-
-        if (bind(recv_sock, (struct sockaddr*)&recv_addr, sizeof(recv_addr)) == -1) {
-            cerr << __func__ << " : bind() error\n";
-            return;
-        }
-
-        // 循环接收
-        while (stopRequested() == false) {
-            memset(recvBuf, 0, VT_PKT_MAX_LEN);
-
-            recv_sock_len = sizeof(recv_addr);
-            recvLen = recvfrom(recv_sock, recvBuf, VT_PKT_MAX_LEN, 0, (struct sockaddr*)&recv_addr, &recv_sock_len);
-
-            if (recvLen <= 0) {
-                if (errno == EAGAIN) {
-                    // cout << "No VideoTransPacket recved.\n";
-                } else {
-                    cerr << "Error accured when recving VideoTransPacket!\n";
-                }
-                continue;
-            }
-
-            VideoTransPacket pkt;
-            pkt.parseFromBuf(recvBuf);
-
-            push(pkt);
-
-            cout << "\n\n*************** Packet recved **********************";
-            pkt.printPktInfo();
-        }
-
-        cond.notify_all();  // 唤醒所有可能在等待的线程
-        runCount--;
-        cout << "PacketRecvQueue::run() exit!\n";
-    }
+    void run();
 
 } packetRecvQueue;
+
+void PacketRecvQueue::push(VideoTransPacket& pkt)
+{
+    std::unique_lock<std::mutex> lock(mtx);
+    q.push(pkt);
+    isEmpty = false;
+    cond.notify_all();
+    lock.unlock();
+}
+
+VideoTransPacket PacketRecvQueue::pop()
+{
+    if (isEmpty) {
+        throw("EmptyQueue");
+    }
+    std::unique_lock<std::mutex> lock(mtx);
+    VideoTransPacket pkt = q.front();
+    q.pop();
+    if (q.empty()) {
+        isEmpty = true;
+    }
+    lock.unlock();
+    return pkt;
+}
+
+void PacketRecvQueue::run()
+{
+    if (runCount == 0) {
+        runCount++;
+    } else {
+        cout << "PacketRecvQueue thread exited: a thread is already running.\n";
+        return;
+    }
+
+    int recv_sock;
+    int recvLen;
+    socklen_t recv_sock_len;
+    struct sockaddr_in recv_addr;
+    char recvBuf[VT_PKT_MAX_LEN];
+
+    memset(recvBuf, 0, VT_PKT_MAX_LEN);
+
+    // UDP接收套接字基本设置
+    recv_sock = socket(PF_INET, SOCK_DGRAM, 0);
+
+    struct timeval recvTimeout; // recvfrom()的超时时间
+    recvTimeout.tv_sec = 3;
+    recvTimeout.tv_usec = 0;
+    if (setsockopt(recv_sock, SOL_SOCKET, SO_RCVTIMEO, &recvTimeout, sizeof(recvTimeout)) == -1) {
+        cerr << __func__ << "setsockopt() failed!\n";
+    }
+
+    memset(&recv_addr, 0, sizeof(recv_addr));
+    recv_addr.sin_family = AF_INET;
+    recv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    recv_addr.sin_port = htons(PORT_VIDEO_TRANS_PKT);
+
+    if (bind(recv_sock, (struct sockaddr*)&recv_addr, sizeof(recv_addr)) == -1) {
+        cerr << __func__ << " : bind() error\n";
+        return;
+    }
+
+    // 循环接收
+    while (stopRequested() == false) {
+        memset(recvBuf, 0, VT_PKT_MAX_LEN);
+
+        recv_sock_len = sizeof(recv_addr);
+        recvLen = recvfrom(recv_sock, recvBuf, VT_PKT_MAX_LEN, 0, (struct sockaddr*)&recv_addr, &recv_sock_len);
+
+        if (recvLen <= 0) {
+            if (errno == EAGAIN) {
+                // cout << "No VideoTransPacket recved.\n";
+            } else {
+                cerr << "Error accured when recving VideoTransPacket!\n";
+            }
+            continue;
+        }
+
+        VideoTransPacket pkt;
+        pkt.parseFromBuf(recvBuf);
+
+        push(pkt);
+
+        cout << "\n\n*************** Packet recved **********************";
+        pkt.printPktInfo();
+    }
+
+    cond.notify_all(); // 唤醒所有可能在等待的线程
+    runCount--;
+    cout << "PacketRecvQueue::run() exit!\n";
+}
 
 /* VideoTransPacket */
 
@@ -1286,10 +1298,8 @@ void VideoTransCtrler::packetReact(VideoTransPacket& pkt)
 
         // 等待本地推流初始化完成后，再发出ready包
         if (pktToSend.getCmd() == VideoTransCmd::ready) {
-            char localVideoUrl[VS_URL_MAX_LEN];
-            memset(localVideoUrl, 0, VS_URL_MAX_LEN);
-            generateUrl(myIP, myIP, localVideoUrl);
-            while (findInPubList(localVideoUrl) == false) {
+            // 汇聚节点不会收到 start 包，无需考虑汇聚节点准备好
+            while (publishingList.find(myIP) == false) {
                 cout << "Local video stream is not ready yet, waiting...\n";
                 sleep_for(seconds(1));
             }
@@ -1316,12 +1326,8 @@ void VideoTransCtrler::packetReact(VideoTransPacket& pkt)
             pktToSend.setSrc(myIP);
             pktToSend.setDst(nextHopIP);
 
-            // TODO: 此处的流程可以再优化以下，会造成重复生成URL的问题
             // 等待推流中继初始化完成后，再发出ready包
-            char republishUrl[VS_URL_MAX_LEN];
-            memset(republishUrl, 0, VS_URL_MAX_LEN);
-            generateUrl(pkt.getCapturer(), myIP, republishUrl);
-            while (findInPubList(republishUrl) == false) {
+            while (publishingList.find(pkt.getCapturer()) == false) {
                 cout << "Relayed video stream is not ready yet, waiting...\n";
                 sleep_for(seconds(1));
             }
@@ -1353,11 +1359,8 @@ void VideoTransCtrler::packetReact(VideoTransPacket& pkt)
             pktToSend.setDst(nextHopIP);
 
             // 等待本地推流中继退出后，再继续发送stop包
-            char localVideoUrl[VS_URL_MAX_LEN];
-            memset(localVideoUrl, 0, VS_URL_MAX_LEN);
-            generateUrl(pkt.getCapturer(), myIP, localVideoUrl);
-            while (findInPubList(localVideoUrl) == true) {
-                cout << "Local video stream is still running, waiting...\n";
+            while (publishingList.find(pkt.getCapturer()) == true) {
+                cout << "Local relayer is still running, waiting...\n";
                 sleep_for(seconds(1));
             }
 
@@ -1483,9 +1486,15 @@ void VideoTransCtrler::run()
         for (char* ip_s : nodeIPList) {
             inet_pton(AF_INET, ip_s, &nodeIP);
 
-            // 停止对应该节点的 relayer
+            // 停止该节点的 relayer
             auto it = relayerList.find(nodeIP);
             deleteRelayer(nodeIP);
+
+            // 等待 relayer 停止后，再发送 stop 包
+            while (publishingList.find(nodeIP)) {
+                cout << "Relayer still running, waiting...\n";
+                sleep_for(seconds(1));
+            }
 
             // 向该节点发送 stop 包
             try {
@@ -1495,15 +1504,6 @@ void VideoTransCtrler::run()
                     cerr << "Fail to find route to " << ip_s <<"\n";
                     continue;
                 }
-            }
-
-            char publishUrl[VS_URL_MAX_LEN];
-            memset(publishUrl, 0, VS_URL_MAX_LEN);
-            generateUrl(nodeIP, myIP, publishUrl);
-
-            while (findInPubList(publishUrl)) {
-                cout << "Relayer still running, waiting...\n";
-                sleep_for(seconds(1));
             }
 
             VideoTransPacket pkt(VideoTransCmd::stop, myIP, nextHopIP, myIP, nodeIP);
@@ -1525,11 +1525,13 @@ void VideoTransCtrler::run()
         sleep_for(seconds(1));
     }
 
+    // 处理收取队列
     while (!packetRecvQueue.empty()) {
         cout << "Some recved packets needs to be handled, waiting...\n";
         sleep_for(seconds(1));
     }
 
+    // 处理发送队列
     while (!packetSendQueue.empty()) {
         cout << "Some packets needs to be send, waiting...\n";
         sleep_for(seconds(1));
@@ -1540,13 +1542,10 @@ void VideoTransCtrler::run()
     packetRecvQueue.stop();
 
     // 清空 relayer列表 和全局的 publishingList
-    char url[VS_URL_MAX_LEN];
     while (!relayerList.empty()) {
         in_addr_t capturerIP = relayerList.begin()->first;
         deleteRelayer(capturerIP);
-        memset(url, 0, VS_URL_MAX_LEN);
-        generateUrl(capturerIP, myIP, url);
-        eraseFromPubList(url);
+        publishingList.erase(capturerIP);
     }
 
     sendQueueThread.join();
