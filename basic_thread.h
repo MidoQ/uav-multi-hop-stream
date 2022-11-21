@@ -13,6 +13,7 @@
  * provides API to set exit signal for the thread
  */
 class Stoppable {
+protected:
     std::promise<void> exitSignal;
     std::future<void> futureObj;
 

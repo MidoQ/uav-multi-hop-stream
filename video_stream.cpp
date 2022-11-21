@@ -31,31 +31,84 @@ static bool findInPubList(char* publishUrl)
     return publishingList.find(std::string(publishUrl)) != publishingList.end();
 }
 
-struct PacketRecvQueue {
-    std::mutex mtx;
-    std::condition_variable cond;
-    std::queue<VideoTransPacket> q;
-} packetRecvQueue;
-
-struct PacketSendQueue {
-    std::mutex mtx;
-    std::condition_variable cond;
-    std::queue<VideoTransPacket> q;
-} packetSendQueue;
-
-class PacketListener : public Stoppable
+class PacketSendQueue : public Stoppable
 {
 private:
     int runCount;
+    int send_sock;
+    int sendLen;
+    struct sockaddr_in send_addr;
+    char sendBuf[VT_PKT_MAX_LEN];
 
-public:
-    PacketListener()
+    std::mutex mtx;
+    std::atomic<bool> isEmpty;
+    std::condition_variable cond;
+    std::queue<VideoTransPacket> q;
+
+private:
+    void sendVTPakcet(VideoTransPacket& pkt)
     {
-        runCount = 0;
+        memset(sendBuf, 0, VT_PKT_MAX_LEN);
+        sendLen = pkt.serializeToBuf(sendBuf);
+
+        send_addr.sin_family = AF_INET;
+        send_addr.sin_addr.s_addr = pkt.getDst();
+        send_addr.sin_port = hton16(PORT_VIDEO_TRANS_PKT);
+
+        sendto(send_sock, sendBuf, sendLen, 0, (struct sockaddr*)&send_addr, sizeof(send_addr));
     }
 
-    ~PacketListener()
+    VideoTransPacket pop()
     {
+        if (isEmpty) {
+            throw("EmptyQueue");
+        }
+        std::unique_lock<std::mutex> lock(mtx);
+        VideoTransPacket pkt = q.front();
+        q.pop();
+        if (q.empty()) {
+            isEmpty = true;
+        }
+        lock.unlock();
+        return pkt;
+    }
+
+    void waitForPacket()
+    {
+        std::unique_lock<std::mutex> lock(mtx);
+        while (stopRequested() == false && isEmpty) {
+            cond.wait(lock);
+        }
+    }
+
+public:
+    PacketSendQueue()
+    {
+        runCount = 0;
+        isEmpty = true;
+    }
+
+    ~PacketSendQueue()
+    {
+    }
+
+    bool empty() { return isEmpty; }
+
+    void push(VideoTransPacket& pkt)
+    {
+        std::unique_lock<std::mutex> lock(mtx);
+        q.push(pkt);
+        isEmpty = false;
+        cond.notify_all();
+        lock.unlock();
+    }
+
+    void stop()
+    {
+        cout << "Stopping send queue...\n";
+        exitSignal.set_value();
+        cond.notify_all();
+        cout << "[PacketSendQueue] Notified all waiter.\n";
     }
 
     void run()
@@ -63,7 +116,95 @@ public:
         if (runCount == 0) {
             runCount++;
         } else {
-            cout << "PacketListener thread exited: a thread is already running.\n";
+            cout << "PacketSendQueue thread exited: a thread is already running.\n";
+            return;
+        }
+
+        memset(sendBuf, 0, VT_PKT_MAX_LEN);
+
+        send_sock = socket(PF_INET, SOCK_DGRAM, 0);
+
+        while (stopRequested() == false) {
+            waitForPacket();
+
+            while (!isEmpty) {
+                VideoTransPacket pkt = pop();
+                cout << "\n\n*************** Packet to send **********************";
+                pkt.printPktInfo();
+                sendVTPakcet(pkt);
+            }
+        }
+
+        runCount--;
+        cout << "PacketSendQueue::run() exit!\n";
+    }
+
+} packetSendQueue;
+
+class PacketRecvQueue : public Stoppable
+{
+private:
+    int runCount;
+    std::atomic<bool> isEmpty;
+    std::mutex mtx;
+    std::condition_variable cond;
+    std::queue<VideoTransPacket> q;
+
+private:
+    void push(VideoTransPacket& pkt)
+    {
+        std::unique_lock<std::mutex> lock(mtx);
+        q.push(pkt);
+        isEmpty = false;
+        cond.notify_all();
+        lock.unlock();
+    }
+
+public:
+    PacketRecvQueue()
+    {
+        isEmpty = true;
+        runCount = 0;
+    }
+
+    ~PacketRecvQueue()
+    {
+    }
+
+    bool empty() { return isEmpty; }
+
+    /// @brief 
+    /// @return 队列中现存的 packet 数量
+    size_t waitForPacket()
+    {
+        std::unique_lock<std::mutex> lock(mtx);
+        while (stopRequested() == false && isEmpty) {
+            cond.wait(lock);
+        }
+        return q.size();
+    }
+
+    VideoTransPacket pop()
+    {
+        if (isEmpty) {
+            throw("EmptyQueue");
+        }
+        std::unique_lock<std::mutex> lock(mtx);
+        VideoTransPacket pkt = q.front();
+        q.pop();
+        if (q.empty()) {
+            isEmpty = true;
+        }
+        lock.unlock();
+        return pkt;
+    }
+
+    void run()
+    {
+        if (runCount == 0) {
+            runCount++;
+        } else {
+            cout << "PacketRecvQueue thread exited: a thread is already running.\n";
             return;
         }
 
@@ -96,7 +237,7 @@ public:
         }
 
         // 循环接收
-        while (stopRequested() == false)  {
+        while (stopRequested() == false) {
             memset(recvBuf, 0, VT_PKT_MAX_LEN);
 
             recv_sock_len = sizeof(recv_addr);
@@ -114,82 +255,18 @@ public:
             VideoTransPacket pkt;
             pkt.parseFromBuf(recvBuf);
 
-            std::unique_lock<std::mutex> lock(packetRecvQueue.mtx);
-            packetRecvQueue.q.push(pkt);
-            packetRecvQueue.cond.notify_all();
-            lock.unlock();
+            push(pkt);
+
+            cout << "\n\n*************** Packet recved **********************";
+            pkt.printPktInfo();
         }
 
+        cond.notify_all();  // 唤醒所有可能在等待的线程
         runCount--;
-        cout << "PacketListener::run() exit!\n";
+        cout << "PacketRecvQueue::run() exit!\n";
     }
 
-} packetListener;
-
-class PacketSender : public Stoppable
-{
-private:
-    int runCount;
-    int send_sock;
-    int sendLen;
-    struct sockaddr_in send_addr;
-    char sendBuf[VT_PKT_MAX_LEN];
-
-private:
-    void sendVTPakcet(VideoTransPacket& pkt)
-    {
-        memset(sendBuf, 0, VT_PKT_MAX_LEN);
-        sendLen = pkt.serializeToBuf(sendBuf);
-
-        send_addr.sin_family = AF_INET;
-        send_addr.sin_addr.s_addr = pkt.getDst();
-        send_addr.sin_port = hton16(PORT_VIDEO_TRANS_PKT);
-
-        sendto(send_sock, sendBuf, sendLen, 0, (struct sockaddr*)&send_addr, sizeof(send_addr));
-    }
-
-public:
-    PacketSender()
-    {
-        runCount = 0;
-    }
-
-    ~PacketSender()
-    {
-    }
-
-    void run()
-    {
-        if (runCount == 0) {
-            runCount++;
-        } else {
-            cout << "PacketSender thread exited: a thread is already running.\n";
-            return;
-        }
-
-        memset(sendBuf, 0, VT_PKT_MAX_LEN);
-
-        send_sock = socket(PF_INET, SOCK_DGRAM, 0);
-
-        while (stopRequested() == false) {
-            std::unique_lock<std::mutex> lock(packetSendQueue.mtx);
-            while (stopRequested() == false && packetSendQueue.q.empty()) {
-                packetSendQueue.cond.wait(lock);
-            }
-
-            while (!packetSendQueue.q.empty()) {
-                VideoTransPacket pkt = packetSendQueue.q.front();
-                sendVTPakcet(pkt);
-                packetSendQueue.q.pop();
-                cout << "VT Packet send!\n";
-            }
-        }
-
-        runCount--;
-        cout << "PacketSender::run() exit!\n";
-    }
-
-} packetSender;
+} packetRecvQueue;
 
 /* VideoTransPacket */
 
@@ -1129,9 +1206,6 @@ void VideoTransCtrler::packetReact(VideoTransPacket& pkt)
     in_addr_t nextHopIP = 0;
     VideoTransPacket pktToSend(pkt);
 
-    cout << "\n\n*************** pktToSend original **********************";
-    pktToSend.printPktInfo();
-
     switch (pkt.getCmd()) {
     case VideoTransCmd::start: {
         try {
@@ -1152,9 +1226,6 @@ void VideoTransCtrler::packetReact(VideoTransPacket& pkt)
         pktToSend.setSrc(myIP);
         pktToSend.setDst(nextHopIP);
 
-        cout << "\n\n*************** Packet to send **********************";
-        pktToSend.printPktInfo();
-
         // 等待本地推流初始化完成后，再发出ready包
         if (pktToSend.getCmd() == VideoTransCmd::ready) {
             char localVideoUrl[VS_URL_MAX_LEN];
@@ -1166,10 +1237,7 @@ void VideoTransCtrler::packetReact(VideoTransPacket& pkt)
             }
         }
 
-        std::unique_lock<std::mutex> lock(packetSendQueue.mtx);
-        packetSendQueue.q.push(pktToSend);
-        cout << "[Recved start packet] VT Packet pushed into queue!\n";
-        packetSendQueue.cond.notify_all();
+        packetSendQueue.push(pktToSend);
         break;
     }
 
@@ -1200,13 +1268,7 @@ void VideoTransCtrler::packetReact(VideoTransPacket& pkt)
                 sleep_for(seconds(1));
             }
 
-            cout << "\n\n*************** Packet to send **********************";
-            pktToSend.printPktInfo();
-
-            std::unique_lock<std::mutex> lock(packetSendQueue.mtx);
-            packetSendQueue.q.push(pktToSend);
-            cout << "[Recved ready packet] VT Packet pushed into queue!\n";
-            packetSendQueue.cond.notify_all();
+            packetSendQueue.push(pktToSend);
         }
         break;
     }
@@ -1232,9 +1294,6 @@ void VideoTransCtrler::packetReact(VideoTransPacket& pkt)
             pktToSend.setSrc(myIP);
             pktToSend.setDst(nextHopIP);
 
-            cout << "\n\n*************** Packet to send **********************";
-            pktToSend.printPktInfo();
-
             // 等待本地推流中继退出后，再继续发送stop包
             char localVideoUrl[VS_URL_MAX_LEN];
             memset(localVideoUrl, 0, VS_URL_MAX_LEN);
@@ -1244,10 +1303,7 @@ void VideoTransCtrler::packetReact(VideoTransPacket& pkt)
                 sleep_for(seconds(1));
             }
 
-            std::unique_lock<std::mutex> lock(packetSendQueue.mtx);
-            packetSendQueue.q.push(pktToSend);
-            cout << "[Stop packet] VT Packet pushed into send queue!\n";
-            packetSendQueue.cond.notify_all();
+            packetSendQueue.push(pktToSend);
         }
         break;
     }
@@ -1307,8 +1363,10 @@ void VideoTransCtrler::deleteRelayer(in_addr_t capturerIP)
     }
 
     VideoRelayer* pRelayer = it->second;
-    pRelayer->stop();
-    sleep_for(milliseconds(20));
+    if (pRelayer->getRunCount() > 0) {
+        pRelayer->stop();
+        sleep_for(milliseconds(20));
+    }
     cout << "Deleting Relayer...\n";
     delete pRelayer;
     relayerList.erase(it);
@@ -1327,32 +1385,15 @@ void VideoTransCtrler::run()
     NodeConfig& config = NodeConfig::getInstance();
     in_addr_t myIP = config.getMyIP();
 
+    // 因为 waitForPacket() 可能会被阻塞，所以必须单独一个子线程，以便程序退出时唤醒它
     auto packetHandler = [&]() {
-        while (handlerStopFlag == false) {
-            std::unique_lock<std::mutex> lock(packetRecvQueue.mtx);
-            while (handlerStopFlag == false && packetRecvQueue.q.empty()) {
-                packetRecvQueue.cond.wait(lock);
-            }
+        while (!handlerStopFlag) {
+            size_t pktCount = packetRecvQueue.waitForPacket();
+            if (pktCount == 0)
+                continue;
 
-            lock.unlock();
-            sleep_for(microseconds(500));
-
-            while (!packetRecvQueue.q.empty()) {
-                lock.lock();
-                VideoTransPacket pkt = packetRecvQueue.q.front();
-                // pkt.printPktInfo();
-                packetRecvQueue.q.pop();
-                lock.unlock();
-
-                // TODO 此处可以优化，因为等待某个节点准备好时，可能阻塞后面的packet的处理
-                packetReact(pkt);
-
-                // auto packetReactThread = [&]() {
-                //     packetReact(pkt);
-                // };
-                // std::thread th(packetReactThread);
-                // th.detach();
-            }
+            VideoTransPacket pkt = packetRecvQueue.pop();
+            packetReact(pkt); // TODO 此处可以优化，因为等待某个节点准备好时，可能阻塞后面的packet的处理
         }
     };
 
@@ -1375,15 +1416,25 @@ void VideoTransCtrler::run()
                 }
             }
             VideoTransPacket pkt(VideoTransCmd::start, myIP, nextHopIP, myIP, nodeIP);
-            std::unique_lock<std::mutex> lock(packetSendQueue.mtx);
-            packetSendQueue.q.push(pkt);
-            packetSendQueue.cond.notify_all();
+            packetSendQueue.push(pkt);
         }
 
-        sleep_for(seconds(30));
+        sleep_for(seconds(45));
+
+        cout << "***************** Stopping video stream... *******************\n";
 
         for (char* ip_s : nodeIPList) {
             inet_pton(AF_INET, ip_s, &nodeIP);
+
+            // 停止对应该节点的 relayer
+            auto it = relayerList.find(nodeIP);
+            if (it != relayerList.end() && it->second->getRunCount() > 0) {
+                it->second->stop();
+            } else {
+                cerr << "Relayer pulling " << ip_s << " not found in relayerList!\n";
+            }
+
+            // 向该节点发送 stop 包
             try {
                 nextHopIP = routeGetter.getNextHop(nodeIP, 3, CHECK_TABLE_FIRST);
             } catch (const char* msg) {
@@ -1403,14 +1454,12 @@ void VideoTransCtrler::run()
             }
 
             VideoTransPacket pkt(VideoTransCmd::stop, myIP, nextHopIP, myIP, nodeIP);
-            std::unique_lock<std::mutex> lock(packetSendQueue.mtx);
-            packetSendQueue.q.push(pkt);
-            packetSendQueue.cond.notify_all();
+            packetSendQueue.push(pkt);
         }
     };
 
-    std::thread packetListenerThread(&PacketListener::run, &packetListener);
-    std::thread packetSenderThread(&PacketSender::run, &packetSender);
+    std::thread recvQueueThread(&PacketRecvQueue::run, &packetRecvQueue);
+    std::thread sendQueueThread(&PacketSendQueue::run, &packetSendQueue);
     std::thread packetHandlerThread(packetHandler);
 
     if (config.getNodeType() == NodeType::sink) {
@@ -1418,30 +1467,33 @@ void VideoTransCtrler::run()
         videoRequesterThread.detach();
     }
 
+    // 等待退出
     while (stopRequested() == false) {
         sleep_for(seconds(1));
     }
 
-    while (!packetRecvQueue.q.empty()) {
+    while (!packetRecvQueue.empty()) {
         cout << "Some recved packets needs to be handled, waiting...\n";
         sleep_for(seconds(1));
     }
 
-    while (!packetSendQueue.q.empty()) {
+    while (!packetSendQueue.empty()) {
         cout << "Some packets needs to be send, waiting...\n";
         sleep_for(seconds(1));
     }
 
     handlerStopFlag = true;
-    packetRecvQueue.cond.notify_all();
-    packetSendQueue.cond.notify_all();
-    packetSender.stop();
-    packetListener.stop();
+    packetSendQueue.stop();
+    packetRecvQueue.stop();
 
-    // for (auto it = relayerList.begin(); it != relayerList.end(); it++) {
-    //     it->second->stop();
-    // }
+    // 停止所有 relayer
+    for (auto it = relayerList.begin(); it != relayerList.end(); it++) {
+        if (it->second->getRunCount() > 0) {
+            it->second->stop();
+        }
+    }
 
+    // 清空 relayer列表 和全局的 publishingList
     char url[VS_URL_MAX_LEN];
     while (!relayerList.empty()) {
         in_addr_t capturerIP = relayerList.begin()->first;
@@ -1451,9 +1503,9 @@ void VideoTransCtrler::run()
         eraseFromPubList(url);
     }
 
+    sendQueueThread.join();
+    recvQueueThread.join();
     packetHandlerThread.join();
-    packetSenderThread.join();
-    packetListenerThread.join();
 
     runCount--;
     cout << "VideoTransCtrler::run() exit!\n";
@@ -1480,4 +1532,13 @@ void generateUrl(in_addr_t capturerIP, in_addr_t publishIP, char urlBuf[])
     twoDigit[0] = '0' + num % 10;
 
     sprintf(urlBuf, "rtsp://%s:%d/vs%s", ipAddr_s, PORT_VIDEO, twoDigit);
+}
+
+std::string generateUrl(in_addr_t capturerIP, in_addr_t publishIP)
+{
+    char urlBuf[VS_URL_MAX_LEN];
+    memset(urlBuf, 0, VS_URL_MAX_LEN);
+
+    generateUrl(capturerIP, publishIP, urlBuf);
+    return std::string(urlBuf);
 }

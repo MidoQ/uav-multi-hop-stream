@@ -12,6 +12,7 @@
 #include <mutex>
 #include <queue>
 #include <string>
+#include <atomic>
 #include <sys/socket.h>
 #include <thread>
 #include <unordered_map>
@@ -200,6 +201,8 @@ public:
 
     // int setIOName(const char pullUrl[], const char publishUrl[]);
 
+    int getRunCount() { return runCount; }
+
     /// @brief 线程函数
     void run();
 };
@@ -243,5 +246,11 @@ public:
 /// @param publishIP 决定<IP>
 /// @param urlBuf 
 void generateUrl(in_addr_t capturerIP, in_addr_t publishIP, char urlBuf[]);
+
+/// @brief 返回string形式的发布视频流的 URL 地址 rtsp://<IP>:8554/vs<num>
+/// @param capturerIP 决定<num>
+/// @param publishIP 决定<IP>
+/// @return 生成的URL
+std::string generateUrl(in_addr_t capturerIP, in_addr_t publishIP);
 
 #endif
