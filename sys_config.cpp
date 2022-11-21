@@ -151,6 +151,7 @@ void NodeConfig::printNodeConfig()
     cout << "broadcastIP: " << broadcast_IP_s << "  [0x" << std::hex << broadcast_IP << "]\n";
     if (nodeType == NodeType::sink) {
         cout << "controllerIP: " << controllerIP_s << "  [0x" << std::hex << controllerIP << "]\n";
+        cout << "sinkIP2Ctrler: " << sinkIP2Ctrler_s << "  [0x" << std::hex << sinkIP2Ctrler << "]\n";
     }
     cout << std::dec << endl;
 }

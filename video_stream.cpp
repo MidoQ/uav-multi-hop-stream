@@ -105,10 +105,8 @@ public:
 
     void stop()
     {
-        cout << "Stopping send queue...\n";
         exitSignal.set_value();
         cond.notify_all();
-        cout << "[PacketSendQueue] Notified all waiter.\n";
     }
 
     void run()
@@ -1038,20 +1036,6 @@ OPEN_OUTPUT_ERR:
     return nullptr;
 }
 
-// int VideoRelayer::setIOName(const char pullUrl[], const char publishUrl[])
-// {
-//     if (strlen(pullUrl) >= 256 || strlen(publishUrl) >= 256) {
-//         cerr << "VideoRelayer::run() : arguments too long, must shorter than 256 characters\n";
-//         return -1;
-//     }
-
-//     strcpy(inFilename, pullUrl);
-//     strcpy(outFilename, publishUrl);
-
-//     ioIsSet = true;
-//     return 0;
-// }
-
 void VideoRelayer::run()
 {
     if (runCount == 0) {
@@ -1367,7 +1351,6 @@ void VideoTransCtrler::deleteRelayer(in_addr_t capturerIP)
         pRelayer->stop();
         sleep_for(milliseconds(20));
     }
-    cout << "Deleting Relayer...\n";
     delete pRelayer;
     relayerList.erase(it);
 }
@@ -1408,7 +1391,7 @@ void VideoTransCtrler::run()
         for (char* ip_s : nodeIPList) {
             inet_pton(AF_INET, ip_s, &nodeIP);
             try {
-                nextHopIP = routeGetter.getNextHop(nodeIP, 3, CHECK_TABLE_FIRST);
+                nextHopIP = routeGetter.getNextHop(nodeIP, 15, SEND_REQ_ANYWAY);
             } catch (const char* msg) {
                 if (strcmp(msg, "DestinationUnreachable") == 0) {
                     cerr << "Fail to find route to " << ip_s <<"\n";
@@ -1428,15 +1411,11 @@ void VideoTransCtrler::run()
 
             // 停止对应该节点的 relayer
             auto it = relayerList.find(nodeIP);
-            if (it != relayerList.end() && it->second->getRunCount() > 0) {
-                it->second->stop();
-            } else {
-                cerr << "Relayer pulling " << ip_s << " not found in relayerList!\n";
-            }
+            deleteRelayer(nodeIP);
 
             // 向该节点发送 stop 包
             try {
-                nextHopIP = routeGetter.getNextHop(nodeIP, 3, CHECK_TABLE_FIRST);
+                nextHopIP = routeGetter.getNextHop(nodeIP, 15, CHECK_TABLE_FIRST);
             } catch (const char* msg) {
                 if (strcmp(msg, "DestinationUnreachable") == 0) {
                     cerr << "Fail to find route to " << ip_s <<"\n";
@@ -1485,13 +1464,6 @@ void VideoTransCtrler::run()
     handlerStopFlag = true;
     packetSendQueue.stop();
     packetRecvQueue.stop();
-
-    // 停止所有 relayer
-    for (auto it = relayerList.begin(); it != relayerList.end(); it++) {
-        if (it->second->getRunCount() > 0) {
-            it->second->stop();
-        }
-    }
 
     // 清空 relayer列表 和全局的 publishingList
     char url[VS_URL_MAX_LEN];

@@ -503,6 +503,10 @@ void DsrRouteListener::run()
         }
 
         packetInfo.parseFromBuf(packetBuf);
+        #ifdef DEBUG_PRINT_DSR_PKT
+        cout << "[ DSR Packet recved ]\n";
+        packetInfo.printReqInfo();
+        #endif
 
         // 处理报文
         if (packetInfo.getType() == DsrPacketType::request) {

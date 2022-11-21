@@ -199,8 +199,6 @@ public:
     VideoRelayer(const char pullUrl[], const char publishUrl[]);
     ~VideoRelayer();
 
-    // int setIOName(const char pullUrl[], const char publishUrl[]);
-
     int getRunCount() { return runCount; }
 
     /// @brief 线程函数
