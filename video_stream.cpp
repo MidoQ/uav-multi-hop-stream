@@ -1,35 +1,110 @@
 #include "video_stream.h"
 
-std::mutex mtx4pubList;
-std::unordered_set<std::string> publishingList;   // 已推流URL列表
+/* PublishingList */
 
-static void addToPubList(char* publishUrl)
+class PublishingList
+{
+private:
+    std::atomic<bool> isEmpty;
+    std::mutex mtx4pubList;
+    std::unordered_set<std::string> list;   // 本地已推流URL列表
+
+public:
+    PublishingList()
+    {
+        isEmpty = true;
+    }
+
+    ~PublishingList();
+
+    bool empty() { return isEmpty; }
+
+    void add(std::string publishUrl);
+    void add(char* publishUrl);
+    void add(in_addr_t capturerIP);
+
+    void erase(std::string publishUrl);
+    void erase(char* publishUrl);
+    void erase(in_addr_t capturerIP);
+
+    bool find(std::string publishUrl);
+    bool find(char* publishUrl);
+    bool find(in_addr_t capturerIP);
+
+} publishingList;
+
+void PublishingList::add(std::string publishUrl)
 {
     cout << "Adding publishUrl: " << publishUrl << '\n';
     std::unique_lock<std::mutex> lock(mtx4pubList);
-    publishingList.insert(std::string(publishUrl));
+    list.insert(publishUrl);
+    isEmpty = false;
     lock.unlock();
 }
 
-static void eraseFromPubList(char* publishUrl)
+void PublishingList::add(char* publishUrl)
+{
+    add(std::string(publishUrl));
+}
+
+void PublishingList::add(in_addr_t capturerIP)
+{
+    NodeConfig& config = NodeConfig::getInstance();
+    in_addr_t myIP = config.getMyIP();
+    std::string publishUrl = generateUrl(capturerIP, myIP);
+    add(publishUrl);
+}
+
+void PublishingList::erase(std::string publishUrl)
 {
     cout << "Erasing publishUrl: " << publishUrl << '\n';
     std::unique_lock<std::mutex> lock(mtx4pubList);
-    auto it = publishingList.find(std::string(publishUrl));
-    if (it != publishingList.end()) {
-        publishingList.erase(it);
+    auto it = list.find(publishUrl);
+    if (it != list.end()) {
+        list.erase(it);
     } else {
         cout << "URL [" << publishUrl << "] NOT found in publishingList.\n";
+    }
+    if (list.empty()) {
+        isEmpty = true;
     }
     lock.unlock();
 }
 
-static bool findInPubList(char* publishUrl)
+void PublishingList::erase(char* publishUrl)
+{
+    erase(std::string(publishUrl));
+}
+
+void PublishingList::erase(in_addr_t capturerIP)
+{
+    NodeConfig& config = NodeConfig::getInstance();
+    in_addr_t myIP = config.getMyIP();
+    std::string publishUrl = generateUrl(capturerIP, myIP);
+    erase(publishUrl);
+}
+
+bool PublishingList::find(std::string publishUrl)
 {
     cout << "Finding publishUrl: " << publishUrl << '\n';
     std::unique_lock<std::mutex> lock(mtx4pubList);
-    return publishingList.find(std::string(publishUrl)) != publishingList.end();
+    return list.find(publishUrl) != list.end();
 }
+
+bool PublishingList::find(char* publishUrl)
+{
+    return find(std::string(publishUrl));
+}
+
+bool PublishingList::find(in_addr_t capturerIP)
+{
+    NodeConfig& config = NodeConfig::getInstance();
+    in_addr_t myIP = config.getMyIP();
+    std::string publishUrl = generateUrl(capturerIP, myIP);
+    return find(publishUrl);
+}
+
+/* PacketSendQueue */
 
 class PacketSendQueue : public Stoppable
 {
@@ -138,6 +213,8 @@ public:
     }
 
 } packetSendQueue;
+
+/* PacketRecvQueue */
 
 class PacketRecvQueue : public Stoppable
 {
@@ -730,7 +807,7 @@ void VideoPublisher::run()
                      SWS_BILINEAR, NULL, NULL, NULL);
 
     // 加入已推流节点列表
-    addToPubList(outFilename);
+    publishingList.add(outFilename);
 
     // 循环采集、编码、推流
     for (size_t cameraFrame = 0; stopRequested() == false; cameraFrame++) {
@@ -820,7 +897,7 @@ void VideoPublisher::run()
     // av_write_trailer(ofmtCtx);
 
 PUBLISHER_END:
-    eraseFromPubList(outFilename);
+    publishingList.erase(outFilename);
 
     avformat_close_input(&ifmtCtx);
 
@@ -1086,7 +1163,7 @@ void VideoRelayer::run()
     }
 
     // 加入已推流节点列表
-    addToPubList(outFilename);
+    publishingList.add(outFilename);
 
     // while (1) {
     for (size_t i = 0; stopRequested() == false; i++) {
@@ -1143,16 +1220,13 @@ void VideoRelayer::run()
     // Write file trailer
     // av_write_trailer(ofmtCtx);
 
-// end:
-    eraseFromPubList(outFilename);
+RELAYER_END:
+    publishingList.erase(outFilename);
 
-    cout << "Freeing packet...\n";
     av_packet_free(&pPkt);
     av_free(pPkt);
 
-    cout << "Relayer input " << inFilename << " closing...\n";
     avformat_close_input(&ifmtCtx);
-    cout << "Relayer input closed!\n";
 
     /* close output */
     if (ofmtCtx && !(ofmtCtx->oformat->flags & AVFMT_NOFILE)) {
