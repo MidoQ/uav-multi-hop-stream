@@ -453,7 +453,7 @@ void VideoTransPacket::printPktInfo()
          << "cmd: " << cmd_s << '\n'
          << "src: " << src_s << '\t' << "dst: " << dst_s << '\n'
          << "req: " << requester_s << '\t' << "cap: " << capturer_s << '\n'
-         << "==========================================" << endl;
+         << "==========================================\n" << endl;
 }
 
 /* VideoPublisher */
@@ -902,7 +902,7 @@ void VideoPublisher::run()
         }
         av_packet_unref(pPkt);
     }
-    // av_write_trailer(ofmtCtx);
+    av_write_trailer(ofmtCtx);
 
 PUBLISHER_END:
     publishingList.erase(outFilename);
@@ -1174,9 +1174,6 @@ void VideoRelayer::run()
 
     // 加入已推流节点列表
     publishingList.add(outFilename);
-    if (lostList.find(inFilename)) {
-        lostList.erase(inFilename);
-    }
 
     // while (1) {
     for (size_t i = 0; stopRequested() == false; i++) {
@@ -1234,13 +1231,13 @@ void VideoRelayer::run()
 #endif
 
     // Write file trailer
-    // av_write_trailer(ofmtCtx);
+    av_write_trailer(ofmtCtx);
 
 RELAYER_END:
     publishingList.erase(outFilename);
     NodeConfig& config = NodeConfig::getInstance();
-    if (config.getNodeType() == NodeType::sink && abnormalQuit) {
-        lostList.add(inFilename);
+    if (abnormalQuit) {
+        lostList.add(outFilename);
     }
 
     av_packet_free(&pPkt);
@@ -1288,15 +1285,15 @@ void VideoTransCtrler::packetReact(VideoTransPacket& pkt)
     case VideoTransCmd::start: {
         try {
             if (pkt.getCapturer() == myIP) {
-                nextHopIP = routeGetter.getNextHop(pkt.getRequester(), 3, CHECK_TABLE_FIRST);
+                nextHopIP = routeGetter.getNextHop(pkt.getRequester(), 10, SEND_REQ_ANYWAY);
                 pktToSend.setCmd(VideoTransCmd::ready);
             } else {
-                nextHopIP = routeGetter.getNextHop(pkt.getCapturer(), 3, CHECK_TABLE_FIRST);
+                nextHopIP = routeGetter.getNextHop(pkt.getCapturer(), 10, SEND_REQ_ANYWAY);
             }
         } catch (const char* msg) {
             if (strcmp(msg, "DestinationUnreachable") == 0) {
-                cerr << __func__ << "Fail to find route!\n";
-                // pkt.printPktInfo(); todo
+                cerr << __func__ << " Fail to find route!\n";
+                pkt.printPktInfo();
                 break;
             }
         }
@@ -1319,14 +1316,20 @@ void VideoTransCtrler::packetReact(VideoTransPacket& pkt)
 
     case VideoTransCmd::ready: {
         addRelayer(pkt.getCapturer(), pkt.getSrc());
+        std::string lostRecoverUrl = generateUrl(pkt.getCapturer(),
+            config.getNodeType() == NodeType::sink ? config.getSinkIP2Ctrler() : myIP);
+        if (lostList.find(lostRecoverUrl)) {
+            lostList.erase(lostRecoverUrl);
+            cout << "Lost stream: " << lostRecoverUrl << " recovered!\n";
+        }
 
         if (pkt.getRequester() != myIP) {
             try {
-                nextHopIP = routeGetter.getNextHop(pkt.getRequester(), 3, CHECK_TABLE_FIRST);
+                nextHopIP = routeGetter.getNextHop(pkt.getRequester(), 10, SEND_REQ_ANYWAY);
             } catch (const char* msg) {
                 if (strcmp(msg, "DestinationUnreachable") == 0) {
-                    cerr << __func__ << "Fail to find route!\n";
-                    // pkt.printPktInfo(); todo
+                    cerr << __func__ << " Fail to find route!\n";
+                    pkt.printPktInfo();
                     break;
                 }
             }
@@ -1353,11 +1356,11 @@ void VideoTransCtrler::packetReact(VideoTransPacket& pkt)
         deleteRelayer(pkt.getCapturer());
 
         try {
-            nextHopIP = routeGetter.getNextHop(pkt.getCapturer(), 3, CHECK_TABLE_FIRST);
+            nextHopIP = routeGetter.getNextHop(pkt.getCapturer(), 10, SEND_REQ_ANYWAY);
         } catch (const char* msg) {
             if (strcmp(msg, "DestinationUnreachable") == 0) {
-                cerr << __func__ << "Fail to find route!\n";
-                // pkt.printPktInfo(); todo
+                cerr << __func__ << " Fail to find route!\n";
+                pkt.printPktInfo();
                 break;
             }
         }
@@ -1490,7 +1493,7 @@ void VideoTransCtrler::run()
 
         sleep_for(seconds(45));
 
-        cout << "***************** Stopping video stream... *******************\n";
+        /* cout << "***************** Stopping video stream... *******************\n";
 
         for (char* ip_s : nodeIPList) {
             inet_pton(AF_INET, ip_s, &nodeIP);
@@ -1517,7 +1520,7 @@ void VideoTransCtrler::run()
 
             VideoTransPacket pkt(VideoTransCmd::stop, myIP, nextHopIP, myIP, nodeIP);
             packetSendQueue.push(pkt);
-        }
+        } */
     };
 
     std::thread recvQueueThread(&PacketRecvQueue::run, &packetRecvQueue);
@@ -1537,16 +1540,26 @@ void VideoTransCtrler::run()
             std::string lostUrl = lostList.fetch();
             splitUrl(lostUrl, capturerIP, publishIP);
 
-            try {
-                nextHopIP = routeGetter.getNextHop(capturerIP, 15, SEND_REQ_ANYWAY);
-            } catch (const char* msg) {
-                if (strcmp(msg, "DestinationUnreachable") == 0) {
-                    cerr << "Fail to find route to " << capturerIP <<"\n";
-                    continue;
+            deleteRelayer(capturerIP);
+
+            if (config.getNodeType() == NodeType::sink) {
+                while (publishingList.find(lostUrl)) {
+                    cout << "Lost link relayer is not exited, waiting...\n";
+                    sleep_for(seconds(1));
                 }
+
+                try {
+                    nextHopIP = routeGetter.getNextHop(capturerIP, 15, SEND_REQ_ANYWAY);
+                } catch (const char* msg) {
+                    if (strcmp(msg, "DestinationUnreachable") == 0) {
+                        cerr << "Fail to find route to " << capturerIP <<"\n";
+                        continue;
+                    }
+                }
+
+                VideoTransPacket pkt(VideoTransCmd::start, myIP, nextHopIP, myIP, capturerIP);
+                packetSendQueue.push(pkt);
             }
-            VideoTransPacket pkt(VideoTransCmd::start, myIP, nextHopIP, myIP, capturerIP);
-            packetSendQueue.push(pkt);
         }
         sleep_for(seconds(1));
     }
@@ -1571,7 +1584,7 @@ void VideoTransCtrler::run()
     while (!relayerList.empty()) {
         in_addr_t capturerIP = relayerList.begin()->first;
         deleteRelayer(capturerIP);
-        publishingList.erase(capturerIP, NodeType::sink ? config.getSinkIP2Ctrler() : myIP);
+        publishingList.erase(capturerIP, config.getNodeType() == NodeType::sink ? config.getSinkIP2Ctrler() : myIP);
     }
 
     sendQueueThread.join();
@@ -1629,9 +1642,8 @@ void splitUrl(const std::string& url, in_addr_t& capturerIP, in_addr_t& publishI
     size_t end = url.find(endStr());
 
     memcpy(ip_s, url.c_str() + begin, end - begin);
-    cout << ip_s << '\n';
 
-    inet_pton(AF_INET, ip_s, &capturerIP);
+    inet_pton(AF_INET, ip_s, &publishIP);
 
     char c;
     strcpy(ip_s, "192.168.2.1");
@@ -1639,7 +1651,6 @@ void splitUrl(const std::string& url, in_addr_t& capturerIP, in_addr_t& publishI
     strncat(ip_s, &c, 1);
     c = url[url.size() - 1];
     strncat(ip_s, &c, 1);
-    cout << ip_s << '\n';
 
-    inet_pton(AF_INET, ip_s, &publishIP);
+    inet_pton(AF_INET, ip_s, &capturerIP);
 }

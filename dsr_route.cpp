@@ -1,8 +1,17 @@
 #include "dsr_route.h"
 #include "sys_config.h"
+#include <random>
 
 /* Global variables */
 std::atomic<uint32_t> myReqID = {0};
+
+static void randomizeMyReqID()
+{
+    std::default_random_engine eng(time(0));
+    std::uniform_int_distribution<int> distr(0, UINT32_MAX / 2);
+    myReqID = distr(eng);
+    cout << "Init DSR reqID: " << myReqID << '\n';
+}
 
 enum RouteRespondState : char {
     waiting = 1,    // requester 正在等待路由回复
@@ -188,17 +197,19 @@ bool DsrRouteTable::updateRouteItem(in_addr_t _dstIP, in_addr_t _nextHopIP, int 
 {
     std::map<in_addr_t, routeTableVal>::iterator it = routeTable.find(_dstIP);
 
-    if (it == routeTable.end()) {
-        // 无此表项，插入新表项即可
-        routeTable.insert(std::pair<in_addr_t, routeTableVal>(_dstIP, routeTableVal(_nextHopIP, _metric)));
-        return true;
-    } else if (_metric < it->second.metric) {
-        // 有此表项，但距离更小时才插入
-        // TODO: 此处策略可能不对。DSR总是更新一个路由表项，不论其距离，这样才能及时更新过期表项
-        routeTable[_dstIP] = routeTableVal(_nextHopIP, _metric);
-        return true;
-    }
-    return false;
+    // if (it == routeTable.end()) {
+    //     // 无此表项，插入新表项即可
+    //     routeTable.insert(std::pair<in_addr_t, routeTableVal>(_dstIP, routeTableVal(_nextHopIP, _metric)));
+    //     return true;
+    // } else if (_metric < it->second.metric) {
+    //     // 有此表项，但距离更小时才插入
+    //     // TODO: 此处策略可能不对。DSR总是更新一个路由表项，不论其距离，这样才能及时更新过期表项
+    //     routeTable[_dstIP] = routeTableVal(_nextHopIP, _metric);
+    //     return true;
+    // }
+    // return false;
+    routeTable.insert(std::pair<in_addr_t, routeTableVal>(_dstIP, routeTableVal(_nextHopIP, _metric)));
+    return true;
 }
 
 bool DsrRouteTable::findRouteItem(in_addr_t dstIP, routeTableVal& item)
@@ -469,6 +480,8 @@ DsrRouteListener::DsrRouteListener()
     brd_addr.sin_port = hton16(PORT_DSR);
 
     setsockopt(brd_sock, SOL_SOCKET, SO_BROADCAST, (void*)&so_brd, sizeof(so_brd));
+
+    randomizeMyReqID();
 }
 
 DsrRouteListener::~DsrRouteListener()
