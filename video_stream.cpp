@@ -21,17 +21,19 @@ public:
 
     void add(std::string publishUrl);
     void add(char* publishUrl);
-    void add(in_addr_t capturerIP);
+    void add(in_addr_t capturerIP, in_addr_t publisherIP);
 
     void erase(std::string publishUrl);
     void erase(char* publishUrl);
-    void erase(in_addr_t capturerIP);
+    void erase(in_addr_t capturerIP, in_addr_t publisherIP);
 
     bool find(std::string publishUrl);
     bool find(char* publishUrl);
-    bool find(in_addr_t capturerIP);
+    bool find(in_addr_t capturerIP, in_addr_t publisherIP);
 
-} publishingList;
+    std::string fetch() { return *(list.begin()); }
+
+} publishingList, lostList;
 
 void PublishingList::add(std::string publishUrl)
 {
@@ -47,11 +49,9 @@ void PublishingList::add(char* publishUrl)
     add(std::string(publishUrl));
 }
 
-void PublishingList::add(in_addr_t capturerIP)
+void PublishingList::add(in_addr_t capturerIP, in_addr_t publisherIP)
 {
-    NodeConfig& config = NodeConfig::getInstance();
-    in_addr_t myIP = config.getMyIP();
-    std::string publishUrl = generateUrl(capturerIP, myIP);
+    std::string publishUrl = generateUrl(capturerIP, publisherIP);
     add(publishUrl);
 }
 
@@ -76,11 +76,9 @@ void PublishingList::erase(char* publishUrl)
     erase(std::string(publishUrl));
 }
 
-void PublishingList::erase(in_addr_t capturerIP)
+void PublishingList::erase(in_addr_t capturerIP, in_addr_t publisherIP)
 {
-    NodeConfig& config = NodeConfig::getInstance();
-    in_addr_t myIP = config.getMyIP();
-    std::string publishUrl = generateUrl(capturerIP, myIP);
+    std::string publishUrl = generateUrl(capturerIP, publisherIP);
     erase(publishUrl);
 }
 
@@ -96,11 +94,9 @@ bool PublishingList::find(char* publishUrl)
     return find(std::string(publishUrl));
 }
 
-bool PublishingList::find(in_addr_t capturerIP)
+bool PublishingList::find(in_addr_t capturerIP, in_addr_t publisherIP)
 {
-    NodeConfig& config = NodeConfig::getInstance();
-    in_addr_t myIP = config.getMyIP();
-    std::string publishUrl = generateUrl(capturerIP, myIP);
+    std::string publishUrl = generateUrl(capturerIP, publisherIP);
     return find(publishUrl);
 }
 
@@ -1136,6 +1132,8 @@ void VideoRelayer::run()
 
     cout << "Video relay INPUT: " << inFilename << "\nVideo relay OUTPUT: " << outFilename << "\n";
 
+    bool abnormalQuit = false;
+
     // 初始化
     avformat_network_init();
 
@@ -1176,14 +1174,20 @@ void VideoRelayer::run()
 
     // 加入已推流节点列表
     publishingList.add(outFilename);
+    if (lostList.find(inFilename)) {
+        lostList.erase(inFilename);
+    }
 
     // while (1) {
     for (size_t i = 0; stopRequested() == false; i++) {
         AVStream *inStream, *outStream;
         // Get an AVPacket
         ret = av_read_frame(ifmtCtx, pPkt);
-        if (ret < 0)
+        if (ret < 0) {
+            cerr << "VideoRelayer: Broken link\n";
+            abnormalQuit = true;
             break;
+        }
 
         if (!firstPtsIsSet) {
             firstPts = pPkt->pts;
@@ -1234,6 +1238,10 @@ void VideoRelayer::run()
 
 RELAYER_END:
     publishingList.erase(outFilename);
+    NodeConfig& config = NodeConfig::getInstance();
+    if (config.getNodeType() == NodeType::sink && abnormalQuit) {
+        lostList.add(inFilename);
+    }
 
     av_packet_free(&pPkt);
     av_free(pPkt);
@@ -1299,7 +1307,7 @@ void VideoTransCtrler::packetReact(VideoTransPacket& pkt)
         // 等待本地推流初始化完成后，再发出ready包
         if (pktToSend.getCmd() == VideoTransCmd::ready) {
             // 汇聚节点不会收到 start 包，无需考虑汇聚节点准备好
-            while (publishingList.find(myIP) == false) {
+            while (publishingList.find(myIP, myIP) == false) {
                 cout << "Local video stream is not ready yet, waiting...\n";
                 sleep_for(seconds(1));
             }
@@ -1327,7 +1335,7 @@ void VideoTransCtrler::packetReact(VideoTransPacket& pkt)
             pktToSend.setDst(nextHopIP);
 
             // 等待推流中继初始化完成后，再发出ready包
-            while (publishingList.find(pkt.getCapturer()) == false) {
+            while (publishingList.find(pkt.getCapturer(), myIP) == false) {
                 cout << "Relayed video stream is not ready yet, waiting...\n";
                 sleep_for(seconds(1));
             }
@@ -1359,7 +1367,7 @@ void VideoTransCtrler::packetReact(VideoTransPacket& pkt)
             pktToSend.setDst(nextHopIP);
 
             // 等待本地推流中继退出后，再继续发送stop包
-            while (publishingList.find(pkt.getCapturer()) == true) {
+            while (publishingList.find(pkt.getCapturer(), myIP) == true) {
                 cout << "Local relayer is still running, waiting...\n";
                 sleep_for(seconds(1));
             }
@@ -1444,6 +1452,7 @@ void VideoTransCtrler::run()
     std::atomic<bool> handlerStopFlag(false);
     NodeConfig& config = NodeConfig::getInstance();
     in_addr_t myIP = config.getMyIP();
+    DsrRouteGetter routeGetter;
 
     // 因为 waitForPacket() 可能会被阻塞，所以必须单独一个子线程，以便程序退出时唤醒它
     auto packetHandler = [&]() {
@@ -1491,7 +1500,7 @@ void VideoTransCtrler::run()
             deleteRelayer(nodeIP);
 
             // 等待 relayer 停止后，再发送 stop 包
-            while (publishingList.find(nodeIP)) {
+            while (publishingList.find(nodeIP, config.getSinkIP2Ctrler())) {
                 cout << "Relayer still running, waiting...\n";
                 sleep_for(seconds(1));
             }
@@ -1522,6 +1531,23 @@ void VideoTransCtrler::run()
 
     // 等待退出
     while (stopRequested() == false) {
+        // 尝试重新连接断开的视频流
+        if (!lostList.empty()) {
+            in_addr_t capturerIP, publishIP, nextHopIP;
+            std::string lostUrl = lostList.fetch();
+            splitUrl(lostUrl, capturerIP, publishIP);
+
+            try {
+                nextHopIP = routeGetter.getNextHop(capturerIP, 15, SEND_REQ_ANYWAY);
+            } catch (const char* msg) {
+                if (strcmp(msg, "DestinationUnreachable") == 0) {
+                    cerr << "Fail to find route to " << capturerIP <<"\n";
+                    continue;
+                }
+            }
+            VideoTransPacket pkt(VideoTransCmd::start, myIP, nextHopIP, myIP, capturerIP);
+            packetSendQueue.push(pkt);
+        }
         sleep_for(seconds(1));
     }
 
@@ -1545,7 +1571,7 @@ void VideoTransCtrler::run()
     while (!relayerList.empty()) {
         in_addr_t capturerIP = relayerList.begin()->first;
         deleteRelayer(capturerIP);
-        publishingList.erase(capturerIP);
+        publishingList.erase(capturerIP, NodeType::sink ? config.getSinkIP2Ctrler() : myIP);
     }
 
     sendQueueThread.join();
@@ -1586,4 +1612,34 @@ std::string generateUrl(in_addr_t capturerIP, in_addr_t publishIP)
 
     generateUrl(capturerIP, publishIP, urlBuf);
     return std::string(urlBuf);
+}
+
+void splitUrl(const std::string& url, in_addr_t& capturerIP, in_addr_t& publishIP)
+{
+    char ip_s[INET_ADDRSTRLEN];
+    memset(ip_s, 0, INET_ADDRSTRLEN);
+
+    auto endStr = []() -> std::string {
+        char buf[6] = { 0 };
+        sprintf(buf, ":%d", PORT_VIDEO);
+        return std::string(buf);
+    };
+
+    size_t begin = url.find("rtsp://") + strlen("rtsp://");
+    size_t end = url.find(endStr());
+
+    memcpy(ip_s, url.c_str() + begin, end - begin);
+    cout << ip_s << '\n';
+
+    inet_pton(AF_INET, ip_s, &capturerIP);
+
+    char c;
+    strcpy(ip_s, "192.168.2.1");
+    c = url[url.size() - 2];
+    strncat(ip_s, &c, 1);
+    c = url[url.size() - 1];
+    strncat(ip_s, &c, 1);
+    cout << ip_s << '\n';
+
+    inet_pton(AF_INET, ip_s, &publishIP);
 }

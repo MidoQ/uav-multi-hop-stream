@@ -251,4 +251,10 @@ void generateUrl(in_addr_t capturerIP, in_addr_t publishIP, char urlBuf[]);
 /// @return 生成的URL
 std::string generateUrl(in_addr_t capturerIP, in_addr_t publishIP);
 
+/// @brief 从发布视频流的 URL 中提取出 capturerIP 和 publishIP
+/// @param url 
+/// @param capturerIP 
+/// @param publishIP 
+void splitUrl(const std::string& url, in_addr_t& capturerIP, in_addr_t& publishIP);
+
 #endif
