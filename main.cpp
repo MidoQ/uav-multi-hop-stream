@@ -72,13 +72,13 @@ int main(int argc, char* argv[])
     sleep_for(seconds(10));
 
     // 邻居表上报
-    /* std::thread neibListenerThread(&NeighborListener::run, &neibListener);
+    std::thread neibListenerThread(&NeighborListener::run, &neibListener);
     addToStopList(neibListener, neibListenerThread);
 
     sleep_for(seconds(3));
 
     std::thread neibReporterThread(&NeighborReporter::run, &neibReporter);
-    addToStopList(neibReporter, neibReporterThread); */
+    addToStopList(neibReporter, neibReporterThread);
 
 #ifdef DEBUG_PRINT_TOPO
     // Just for debug

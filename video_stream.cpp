@@ -793,10 +793,18 @@ void VideoPublisher::run()
     pFrameCopy->width = pRawCodecCtx->width;
     pFrameCopy->height = pRawCodecCtx->height;
     pFrameCopy->format = pRawCodecCtx->pix_fmt;
-    ret = av_frame_get_buffer(pFrameCopy, 16);
-    if (ret != 0) {
+    // ret = av_frame_get_buffer(pFrameCopy, 16);
+    // if (ret != 0) {
+    //     cerr << "pFrameCopy->data buffer init Failed!\n";
+    //     goto PUBLISHER_END;
+    // }
+    ret = av_image_alloc(pFrameCopy->data, pFrameCopy->linesize,
+                   pRawCodecCtx->width, pRawCodecCtx->height, pRawCodecCtx->pix_fmt, 16);
+    if (ret < 0) {
         cerr << "pFrameCopy->data buffer init Failed!\n";
         goto PUBLISHER_END;
+    } else {
+        cout << "Allocate memory for pFrameCopy->data: " << ret << " bytes.\n";
     }
 
     ret = av_image_alloc(pFrameYUV->data, pFrameYUV->linesize,
@@ -828,6 +836,7 @@ void VideoPublisher::run()
         }
 
         if (cameraFrame % 6 == 0) {
+            av_packet_unref(pPkt);
             continue;
         }
 
@@ -900,6 +909,9 @@ void VideoPublisher::run()
                 }
             }
         }
+        // av_frame_unref(pFrameYUV);
+        // av_frame_unref(pFrameCopy);
+        av_frame_unref(pFrameRaw);
         av_packet_unref(pPkt);
     }
     av_write_trailer(ofmtCtx);
@@ -909,6 +921,10 @@ PUBLISHER_END:
 
     avformat_close_input(&ifmtCtx);
 
+    if (pFrameCopy->data) {
+        av_freep(&pFrameCopy->data[0]);
+    }
+
     if (pFrameYUV->data) {
         av_freep(&pFrameYUV->data[0]);
     }
@@ -916,6 +932,7 @@ PUBLISHER_END:
     av_packet_free(&pPkt);
     av_frame_free(&pFrameRaw);
     av_frame_free(&pFrameCopy);
+    av_frame_free(&pFrameYUV);
 
     /* close output */
     if (ofmtCtx && !(ofmtCtx->oformat->flags & AVFMT_NOFILE)) {
@@ -1473,7 +1490,7 @@ void VideoTransCtrler::run()
     auto videoRequester = [&]() {
         in_addr_t nodeIP, nextHopIP;
         DsrRouteGetter routeGetter;
-        char nodeIPList[][INET_ADDRSTRLEN] = { "192.168.2.101", "192.168.2.103", "192.168.2.104", "192.168.2.105" };
+        char nodeIPList[][INET_ADDRSTRLEN] = { "192.168.2.100", "192.168.2.101", "192.168.2.103", "192.168.2.104", "192.168.2.105" };
 
         sleep_for(seconds(3));
 
@@ -1538,6 +1555,7 @@ void VideoTransCtrler::run()
         if (!lostList.empty()) {
             in_addr_t capturerIP, publishIP, nextHopIP;
             std::string lostUrl = lostList.fetch();
+            lostList.erase(lostUrl);
             splitUrl(lostUrl, capturerIP, publishIP);
 
             deleteRelayer(capturerIP);
