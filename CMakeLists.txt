@@ -24,8 +24,10 @@ endif()
 
 # add_definitions(-DDEBUG_PRINT_TOPO)
 # add_definitions(-DDEBUG_PRINT_NEIB_PKT)
+# add_definitions(-DDEBUG_PRINT_NEIB_DEBUG)
 # add_definitions(-DDEBUG_PRINT_VS_COUNT)
 # add_definitions(-DDEBUG_PRINT_DSR_PKT)
+# add_definitions(-DDEBUG_PRINT_VS_CONTROL)
 
 set(MODULE_CXXFILE
    utils.cpp sys_config.cpp

@@ -57,7 +57,9 @@ void PublishingList::add(in_addr_t capturerIP, in_addr_t publisherIP)
 
 void PublishingList::erase(std::string publishUrl)
 {
+    #ifdef DEBUG_PRINT_VS_CONTROL
     cout << "Erasing publishUrl: " << publishUrl << '\n';
+    #endif
     std::unique_lock<std::mutex> lock(mtx4pubList);
     auto it = list.find(publishUrl);
     if (it != list.end()) {
@@ -84,7 +86,9 @@ void PublishingList::erase(in_addr_t capturerIP, in_addr_t publisherIP)
 
 bool PublishingList::find(std::string publishUrl)
 {
+    #ifdef DEBUG_PRINT_VS_CONTROL
     cout << "Finding publishUrl: " << publishUrl << '\n';
+    #endif
     std::unique_lock<std::mutex> lock(mtx4pubList);
     return list.find(publishUrl) != list.end();
 }
@@ -206,8 +210,10 @@ void PacketSendQueue::run()
 
         while (!isEmpty) {
             VideoTransPacket pkt = pop();
+            #ifdef DEBUG_PRINT_VS_CONTROL
             cout << "\n\n*************** Packet to send **********************";
             pkt.printPktInfo();
+            #endif
             sendVTPakcet(pkt);
         }
     }
@@ -342,8 +348,10 @@ void PacketRecvQueue::run()
 
         push(pkt);
 
+        #ifdef DEBUG_PRINT_VS_CONTROL
         cout << "\n\n*************** Packet recved **********************";
         pkt.printPktInfo();
+        #endif
     }
 
     cond.notify_all(); // 唤醒所有可能在等待的线程

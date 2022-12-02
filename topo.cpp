@@ -767,7 +767,7 @@ void NeighborListener::run()
         // cout << __func__ << ": New client connected!\n";
 
         if (clnt_sock < 0) {
-            cout << "NeighborListener: no client accepted.\n";
+            // cout << "NeighborListener: no client accepted.\n";
             continue;
         }
 
