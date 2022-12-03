@@ -35,8 +35,6 @@
 using std::cerr;
 using std::cout;
 using std::endl;
-using namespace std::this_thread; // sleep_for, sleep_until
-using namespace std::chrono; // nanoseconds, system_clock, seconds
 
 /**
  * @brief 存活广播报文
@@ -218,7 +216,6 @@ typedef struct UndiLink {
 /**
  * @brief 表示一条带时间戳的无向（双向）的连接
  */
-typedef std::chrono::time_point<std::chrono::steady_clock> std_clock;
 typedef struct UndiLinkWithTime {
     in_addr_t sIP;
     in_addr_t dIP;

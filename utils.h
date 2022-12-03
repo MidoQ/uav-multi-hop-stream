@@ -3,6 +3,12 @@
 
 #include <arpa/inet.h>
 #include <sys/select.h>
+#include <chrono>
+#include <ratio>
+#include <thread>
+
+using namespace std::this_thread; // sleep_for, sleep_until
+using namespace std::chrono; // nanoseconds, system_clock, seconds
 
 /*************************************
  *          网络字节序转换函数
@@ -64,5 +70,7 @@ void udelay(size_t us);
 
 /* Delay in milliseconds */
 void mdelay(size_t ms);
+
+typedef std::chrono::time_point<std::chrono::steady_clock> std_clock;
 
 #endif

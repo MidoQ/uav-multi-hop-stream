@@ -33,6 +33,7 @@ extern "C" {
 #define PORT_VIDEO_TRANS_PKT 8600
 #define VT_PKT_MAX_LEN 64
 #define VS_URL_MAX_LEN 128
+#define RELAY_TIMEOUT_MS 5000
 
 enum class VideoTransCmd : char {
     unknown = 0,
@@ -172,13 +173,12 @@ private:
     int frameIndex = 0;
     bool firstPtsIsSet = false;
     bool ioIsSet = false;
+    bool quitFfmpegBlock = false;
+    size_t heartBeat = 0;
     int64_t firstPts = 0, firstDts = 0;
-    // AVOutputFormat* ofmt = nullptr;
     AVFormatContext *ifmtCtx = nullptr, *ofmtCtx = nullptr;
     // AVPacket pkt;
     AVPacket* pPkt = nullptr;
-    // AVCodec *pInCodec, *pOutCodec;
-    // AVCodecContext *pInCodecCtx, *pOutCodecCtx;
 
     char inFilename[256] = { 0 };
     char outFilename[256] = { 0 };
@@ -203,6 +203,21 @@ public:
 
     /// @brief 线程函数
     void run();
+
+    /// @brief 将心跳变量归零
+    void resetHeartBeat() { heartBeat = 0; }
+
+    /// @brief 检测心跳是否超时
+    /// @param ms 上一次check到这次check的时间差
+    /// @return true 已超时 false 未超时
+    bool checkHeartTimeout(size_t ms);
+
+    /// @brief
+    void setQuitBlock() { quitFfmpegBlock = true; }
+
+    /// @brief 
+    /// @return
+    static int relayerCallbackFun(void* ctx);
 };
 
 /**
@@ -213,6 +228,7 @@ class VideoTransCtrler : public Stoppable
 private:
     int runCount;
     std::unordered_map<in_addr_t, VideoRelayer*> relayerList;   // 采集节点IP与Relayer实例的映射
+    std::vector<VideoRelayer*> relayerVec;
     // std::unordered_map<in_addr_t, std::thread*> relayerThreadList;
 
 private:

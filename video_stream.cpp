@@ -958,6 +958,9 @@ PUBLISHER_END:
 
 /* VideoRelayer */
 
+// std::unordered_map<VideoRelayer*, size_t> heartBeats;
+// std::unordered_map<VideoRelayer*, bool> quitFfmpegBlocks;
+
 VideoRelayer::VideoRelayer()
 {
     ioIsSet = false;
@@ -976,6 +979,9 @@ VideoRelayer::VideoRelayer(const char pullUrl[], const char publishUrl[])
         strcpy(outFilename, publishUrl);
         ioIsSet = true;
     }
+
+    // heartBeats[this] = 0;
+    // quitFfmpegBlocks[this] = false;
 }
 
 VideoRelayer::~VideoRelayer()
@@ -1005,8 +1011,11 @@ AVFormatContext* VideoRelayer::openInputCtx(char inFilename[])
 {
     int ret = 0;
     int videoIndex = 0;
-    AVFormatContext* ifmtCtx = nullptr;
+    AVFormatContext* ifmtCtx = avformat_alloc_context();
     AVDictionary* inputOptions = nullptr;
+
+    ifmtCtx->interrupt_callback.callback = relayerCallbackFun;
+    ifmtCtx->interrupt_callback.opaque = this;
 
     if (strstr(inFilename, "rtsp://")) {
         av_dict_set(&inputOptions, "rtsp_transport", "tcp", 0);
@@ -1014,6 +1023,8 @@ AVFormatContext* VideoRelayer::openInputCtx(char inFilename[])
 
     if ((ret = avformat_open_input(&ifmtCtx, inFilename, 0, &inputOptions)) < 0) {
         cerr << "Could not open input file.\n";
+        av_make_error_string(errmsg, sizeof(errmsg), ret);  // debug
+        cerr << errmsg << '\n';
         goto OPEN_INPUT_ERR;
     }
 
@@ -1205,6 +1216,7 @@ void VideoRelayer::run()
         AVStream *inStream, *outStream;
         // Get an AVPacket
         ret = av_read_frame(ifmtCtx, pPkt);
+        resetHeartBeat();    // 重置心跳值，告知 VideoTransCtrler 线程存活
         if (ret < 0) {
             cerr << "VideoRelayer: Broken link\n";
             abnormalQuit = true;
@@ -1284,6 +1296,28 @@ RELAYER_END:
 
     runCount--;
     cout << "VideoRelayer::run() exit!" << endl;
+}
+
+bool VideoRelayer::checkHeartTimeout(size_t ms)
+{
+    heartBeat += ms;
+    if (heartBeat > RELAY_TIMEOUT_MS) {
+        return true;
+    }
+    return false;
+}
+
+int VideoRelayer::relayerCallbackFun(void* param)
+{
+    VideoRelayer* pRelayer = (VideoRelayer*)param;
+    if (!pRelayer)
+        return 0;
+
+    if (pRelayer->quitFfmpegBlock == true) {
+        // 通知ffmpeg退出阻塞
+        return 1;
+    }
+    return 0;
 }
 
 /* VideoTransCtrler */
@@ -1444,6 +1478,7 @@ void VideoTransCtrler::addRelayer(in_addr_t capturerIP, in_addr_t pullIP)
 
     pRelayer = new VideoRelayer(pullUrl, republishUrl);
     relayerList.insert({ capturerIP, pRelayer });
+    relayerVec.push_back(pRelayer);
     std::thread relayerThread(&VideoRelayer::run, pRelayer);
     relayerThread.detach();
 }
@@ -1465,6 +1500,7 @@ void VideoTransCtrler::deleteRelayer(in_addr_t capturerIP)
         sleep_for(milliseconds(20));
     }
     delete pRelayer;
+    pRelayer = nullptr;
     relayerList.erase(it);
 }
 
@@ -1478,6 +1514,7 @@ void VideoTransCtrler::run()
     }
 
     std::atomic<bool> handlerStopFlag(false);
+    std::atomic<bool> retryerStopFlag(false);
     NodeConfig& config = NodeConfig::getInstance();
     in_addr_t myIP = config.getMyIP();
     DsrRouteGetter routeGetter;
@@ -1494,11 +1531,45 @@ void VideoTransCtrler::run()
         }
     };
 
+    // 若有断开的视频流，则尝试重新连接
+    auto relayerRetryer = [&]() {
+        while (!retryerStopFlag) {
+            if (!lostList.empty()) {
+                in_addr_t capturerIP, publishIP, nextHopIP;
+                std::string lostUrl = lostList.fetch();
+                lostList.erase(lostUrl);
+                splitUrl(lostUrl, capturerIP, publishIP);
+
+                deleteRelayer(capturerIP);
+
+                if (config.getNodeType() == NodeType::sink) {
+                    while (publishingList.find(lostUrl)) {
+                        cout << "Lost link relayer is not exited, waiting...\n";
+                        sleep_for(seconds(1));
+                    }
+
+                    try {
+                        nextHopIP = routeGetter.getNextHop(capturerIP, 5, SEND_REQ_ANYWAY);
+                    } catch (const char* msg) {
+                        if (strcmp(msg, "DestinationUnreachable") == 0) {
+                            cerr << "Fail to find route to " << capturerIP << "\n";
+                            continue;
+                        }
+                    }
+
+                    VideoTransPacket pkt(VideoTransCmd::start, myIP, nextHopIP, myIP, capturerIP);
+                    packetSendQueue.push(pkt);
+                }
+            }
+            sleep_for(seconds(1));
+        }
+    };
+
     // Just for debug
     auto videoRequester = [&]() {
         in_addr_t nodeIP, nextHopIP;
         DsrRouteGetter routeGetter;
-        char nodeIPList[][INET_ADDRSTRLEN] = { "192.168.2.100", "192.168.2.101", "192.168.2.103", "192.168.2.104", "192.168.2.105" };
+        char nodeIPList[][INET_ADDRSTRLEN] = { "192.168.2.100", "192.168.2.101", "192.168.2.103", "192.168.2.104"};
 
         sleep_for(seconds(3));
 
@@ -1508,7 +1579,7 @@ void VideoTransCtrler::run()
                 nextHopIP = routeGetter.getNextHop(nodeIP, 15, SEND_REQ_ANYWAY);
             } catch (const char* msg) {
                 if (strcmp(msg, "DestinationUnreachable") == 0) {
-                    cerr << "Fail to find route to " << ip_s <<"\n";
+                    cerr << "Fail to find route to " << ip_s << "\n";
                     continue;
                 }
             }
@@ -1516,7 +1587,7 @@ void VideoTransCtrler::run()
             packetSendQueue.push(pkt);
         }
 
-        sleep_for(seconds(45));
+        sleep_for(seconds(5));
 
         /* cout << "***************** Stopping video stream... *******************\n";
 
@@ -1550,6 +1621,7 @@ void VideoTransCtrler::run()
 
     std::thread recvQueueThread(&PacketRecvQueue::run, &packetRecvQueue);
     std::thread sendQueueThread(&PacketSendQueue::run, &packetSendQueue);
+    std::thread relayerRetryerThread(relayerRetryer);
     std::thread packetHandlerThread(packetHandler);
 
     if (config.getNodeType() == NodeType::sink) {
@@ -1558,36 +1630,35 @@ void VideoTransCtrler::run()
     }
 
     // 等待退出
+    std_clock timeNow, timeOld;
+    timeNow = std::chrono::steady_clock::now();
+    timeOld = timeNow;
+
     while (stopRequested() == false) {
-        // 尝试重新连接断开的视频流
-        if (!lostList.empty()) {
-            in_addr_t capturerIP, publishIP, nextHopIP;
-            std::string lostUrl = lostList.fetch();
-            lostList.erase(lostUrl);
-            splitUrl(lostUrl, capturerIP, publishIP);
+        timeNow = std::chrono::steady_clock::now();
+        std::chrono::duration<double, std::milli> diff = timeNow - timeOld;
+        // cout << "Checking relayer state... diff = " << diff.count() <<  " ms\n";
+        timeOld = timeNow;
 
-            deleteRelayer(capturerIP);
-
-            if (config.getNodeType() == NodeType::sink) {
-                while (publishingList.find(lostUrl)) {
-                    cout << "Lost link relayer is not exited, waiting...\n";
-                    sleep_for(seconds(1));
-                }
-
-                try {
-                    nextHopIP = routeGetter.getNextHop(capturerIP, 15, SEND_REQ_ANYWAY);
-                } catch (const char* msg) {
-                    if (strcmp(msg, "DestinationUnreachable") == 0) {
-                        cerr << "Fail to find route to " << capturerIP <<"\n";
-                        continue;
-                    }
-                }
-
-                VideoTransPacket pkt(VideoTransCmd::start, myIP, nextHopIP, myIP, capturerIP);
-                packetSendQueue.push(pkt);
+        // 遍历所有 relayer 实例
+        for (auto it = relayerVec.begin(); it != relayerVec.end();) {
+            VideoRelayer* pRelayer = *it;
+            if (!pRelayer) {
+                cout << "Relayer " << pRelayer << " is empty, erased.\n";
+                it = relayerVec.erase(it);
+                continue;
             }
+
+            if (pRelayer->checkHeartTimeout(diff.count()) == true) {
+                pRelayer->setQuitBlock();   // 已超时，使阻塞函数如 av_read_frame() 退出
+                it = relayerVec.erase(it);
+                cout << "Relayer " << pRelayer << " timeout, erased.\n";
+                continue;
+            }
+            it++;
         }
-        sleep_for(seconds(1));
+
+        sleep_for(seconds(3));
     }
 
     // 处理收取队列
@@ -1603,6 +1674,7 @@ void VideoTransCtrler::run()
     }
 
     handlerStopFlag = true;
+    retryerStopFlag = true;
     packetSendQueue.stop();
     packetRecvQueue.stop();
 
@@ -1615,6 +1687,7 @@ void VideoTransCtrler::run()
 
     sendQueueThread.join();
     recvQueueThread.join();
+    relayerRetryerThread.join();
     packetHandlerThread.join();
 
     runCount--;
